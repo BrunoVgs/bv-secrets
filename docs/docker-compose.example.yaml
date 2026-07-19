@@ -1,0 +1,39 @@
+# Exemple de service pour le dashboard bv-secrets.
+#
+# Le conteneur est volontairement sans privilège : rootfs en lecture seule,
+# utilisateur non-root, store monté :ro. Sa seule écriture possible est le spool,
+# où il dépose des jobs que le worker — lui privilégié, et hors conteneur —
+# viendra exécuter.
+#
+# Le placer derrière un reverse-proxy authentifié : le mot de passe applicatif
+# est un second verrou, pas le premier.
+
+services:
+  bv-secrets-web:
+    build:
+      context: .
+    image: bv-secrets-web:latest
+    container_name: bv-secrets-web
+    restart: unless-stopped
+    user: "1000:1000"
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp
+    mem_limit: 128m
+    environment:
+      # Mot de passe applicatif du dashboard. Le gérer avec bv-secrets lui-même
+      # plutôt qu'en clair ici (sink env: vers ce service).
+      - BV_DASH_PASSWORD=${BV_DASH_PASSWORD:?definir BV_DASH_PASSWORD}
+    volumes:
+      # Source de vérité partagée avec le worker, qui la réécrit lors d'un
+      # changement de format depuis l'interface : la monter, ne pas se reposer
+      # sur la copie embarquée dans l'image.
+      - ./secrets.conf:/app/secrets.conf:ro
+      # Store en lecture seule : le dashboard révèle une valeur, il n'en écrit aucune.
+      - /opt/bv-secrets:/opt/bv-secrets:ro
+      # Spool : la seule surface d'écriture, et elle ne donne aucun privilège.
+      - /opt/bv-secrets/spool:/spool:rw
+    expose:
+      - "8000"

@@ -1,0 +1,129 @@
+/* Tout le mouvement de l'interface.
+
+   Les listes s'animent en cascade via --i, l'index de ligne posé par le rendu :
+   le délai reste plafonné pour qu'un long tableau finisse d'apparaître vite. */
+
+@keyframes bv-pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.45;transform:scale(.86)}}
+@keyframes bv-rise{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:none}}
+@keyframes bv-fade{from{opacity:0}to{opacity:1}}
+@keyframes bv-slide-left{from{opacity:0;transform:translateX(28px)}to{opacity:1;transform:none}}
+@keyframes bv-slide-up{from{opacity:0;transform:translateY(16px) scale(.98)}to{opacity:1;transform:none}}
+@keyframes bv-pop{from{transform:scale(.82);opacity:0}to{transform:scale(1);opacity:1}}
+@keyframes bv-toast{0%{transform:translate(-50%,12px);opacity:0}
+  10%,85%{transform:translate(-50%,0);opacity:1}100%{transform:translate(-50%,8px);opacity:0}}
+@keyframes bv-shake{0%,100%{transform:none}20%{transform:translateX(-7px)}
+  40%{transform:translateX(6px)}60%{transform:translateX(-4px)}80%{transform:translateX(3px)}}
+@keyframes bv-shimmer{from{background-position:-380px 0}to{background-position:380px 0}}
+@keyframes bv-sweep{from{transform:translateX(-100%)}to{transform:translateX(220%)}}
+
+/* ── entrée des vues ── */
+.view:not(.hidden){animation:bv-slide-up var(--t-slow) var(--ease-out) both}
+
+/* ── cascade des listes et des cartes ── */
+.stat,.row:not(.head){animation:bv-rise var(--t-mid) var(--ease) both;
+  animation-delay:calc(min(var(--i,0) * 22ms, 400ms))}
+.tag,.chip{animation:bv-pop var(--t-mid) var(--ease-spring) both}
+
+/* ── barre latérale ── */
+.nav{transition:background var(--t-fast),color var(--t-fast),border-color var(--t-fast),
+  transform var(--t-fast) var(--ease)}
+.nav:hover{background:var(--hover);transform:translateX(3px)}
+.nav .dot{transition:background var(--t-mid),transform var(--t-mid) var(--ease-spring)}
+.nav.on .dot{transform:scale(1.35)}
+/* liseré rouge qui se déploie sur l'onglet actif */
+.nav::before{content:"";position:absolute;left:0;top:50%;width:2px;height:0;
+  background:var(--acc2);border-radius:0 2px 2px 0;transform:translateY(-50%);
+  transition:height var(--t-mid) var(--ease-out)}
+.nav.on::before{height:60%}
+.sidelink{transition:background var(--t-fast),color var(--t-fast),padding-left var(--t-fast)}
+.sidelink:hover{padding-left:16px}
+.daemon .led{animation:bv-pulse 2.4s infinite}
+.brand .mark{transition:transform var(--t-slow) var(--ease-spring),filter var(--t-mid)}
+.brand:hover .mark{transform:rotate(-8deg) scale(1.08);
+  filter:drop-shadow(0 5px 16px rgba(192,36,44,.7))}
+
+/* ── panneaux et lignes ── */
+.panel{transition:border-color var(--t-mid)}
+.stat{transition:border-color var(--t-mid),transform var(--t-mid) var(--ease),
+  background var(--t-mid)}
+.stat:hover{transform:translateY(-2px);border-color:var(--bd2)}
+.stat .v{transition:color var(--t-mid)}
+.row:not(.head){transition:background var(--t-fast),box-shadow var(--t-fast)}
+.row.click:hover{background:rgba(255,255,255,.03);box-shadow:inset 2px 0 0 var(--acc2)}
+.dot{transition:background var(--t-mid) var(--ease)}
+
+/* ── en-têtes triables ── */
+.row.head .srt{transition:color var(--t-fast)}
+.row.head .srt:hover{color:#e0e0e0}
+.row.head .srt .ar{transition:opacity var(--t-fast),transform var(--t-mid) var(--ease-spring);
+  display:inline-block}
+.row.head .srt.on .ar{transform:scale(1.15)}
+
+/* ── contrôles ── */
+.btn{transition:border-color var(--t-fast),color var(--t-fast),background var(--t-fast),
+  transform var(--t-fast) var(--ease-spring);overflow:hidden}
+.btn:hover:not(:disabled){border-color:rgba(192,36,44,.5);color:var(--acc3);transform:translateY(-1px)}
+.btn:active:not(:disabled){transform:translateY(0) scale(.97)}
+.btn.acc:hover:not(:disabled){background:rgba(192,36,44,.22)}
+.btn.solid:hover:not(:disabled){filter:brightness(1.15);box-shadow:0 6px 20px rgba(192,36,44,.42)}
+/* reflet qui balaie le bouton principal au survol */
+.btn.solid::after{content:"";position:absolute;inset:0;pointer-events:none;
+  background:linear-gradient(100deg,transparent,rgba(255,255,255,.22),transparent);
+  transform:translateX(-100%)}
+.btn.solid:hover:not(:disabled)::after{animation:bv-sweep .75s var(--ease)}
+
+.filt{transition:border-color var(--t-fast),background var(--t-fast),color var(--t-fast),
+  transform var(--t-fast) var(--ease-spring)}
+.filt:hover{border-color:rgba(255,255,255,.25);transform:translateY(-1px)}
+.filt:active{transform:scale(.96)}
+input.search{transition:border-color var(--t-fast),box-shadow var(--t-fast),max-width var(--t-mid)}
+.edit select{transition:border-color var(--t-fast)}
+#accessTable input[type=checkbox]{transition:background var(--t-fast),border-color var(--t-fast),
+  transform var(--t-fast) var(--ease-spring)}
+#accessTable input[type=checkbox]:hover:not(:disabled){border-color:rgba(255,255,255,.3)}
+#accessTable input[type=checkbox]:active:not(:disabled){transform:scale(.93)}
+#accessTable tbody tr{transition:background var(--t-mid)}
+
+/* ── tiroir ── */
+#scrim{animation:bv-fade var(--t-mid) var(--ease) both}
+#drawer{animation:bv-slide-left var(--t-mid) var(--ease-out) both}
+#drawer .sec,#drawer .meta{animation:bv-rise var(--t-mid) var(--ease) both;
+  animation-delay:calc(min(var(--i,0) * 45ms, 220ms) + 60ms)}
+.valbox{transition:border-color var(--t-mid)}
+.valbox .v.on{animation:bv-fade var(--t-mid) var(--ease) both}
+
+/* ── légende ──
+   La hauteur d'un <details> n'est pas animable de façon fiable (le contenu n'est
+   pas rendu quand il est replié) : c'est donc l'apparition des colonnes qui est
+   animée, en cascade, au moment où le bloc devient visible. */
+details.leg{transition:border-color var(--t-mid),background var(--t-mid)}
+details.leg:hover{border-color:rgba(192,36,44,.45)}
+details.leg[open]{background:rgba(192,36,44,.07)}
+details.leg>summary{transition:color var(--t-fast)}
+details.leg[open] .legbody{animation:bv-fade var(--t-mid) var(--ease) both}
+details.leg[open] .legcol{animation:bv-rise var(--t-mid) var(--ease) both}
+details.leg[open] .legcol:nth-child(1){animation-delay:.04s}
+details.leg[open] .legcol:nth-child(2){animation-delay:.09s}
+details.leg[open] .legcol:nth-child(3){animation-delay:.14s}
+details.leg[open] .legcol:nth-child(4){animation-delay:.19s}
+.legcol div{transition:transform var(--t-fast) var(--ease)}
+.legcol div:hover{transform:translateX(3px)}
+
+/* ── console du worker et toast ── */
+#jobpanel.on{animation:bv-slide-up var(--t-mid) var(--ease-out) both}
+#joblog>div{animation:bv-rise .18s var(--ease) both}
+#toast{animation:bv-toast 2.4s var(--ease) forwards}
+
+/* ── états transitoires ── */
+.loginbox.shake{animation:bv-shake .42s var(--ease)}
+.skel{height:14px;border-radius:5px;margin:6px 0;
+  background:linear-gradient(90deg,rgba(255,255,255,.04),rgba(255,255,255,.10),rgba(255,255,255,.04));
+  background-size:380px 100%;animation:bv-shimmer 1.25s linear infinite}
+/* pendant un job : la bordure du panneau respire pour signaler l'attente */
+.panel.busy{border-color:rgba(192,36,44,.35);animation:bv-pulse 1.8s ease-in-out infinite}
+
+@media(prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.01ms !important;animation-iteration-count:1 !important;
+    transition-duration:.01ms !important;scroll-behavior:auto !important}
+  .nav:hover,.stat:hover,.btn:hover:not(:disabled){transform:none}
+}

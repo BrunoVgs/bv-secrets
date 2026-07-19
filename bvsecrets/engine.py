@@ -1,0 +1,407 @@
+"""Moteur bv-secrets : résolution, rendu, rotation et application des secrets.
+
+Un seul cerveau pour trois faces : le CLI, le worker et l'UI web importent cette
+classe et appellent les mêmes méthodes. Aucune valeur n'est jamais journalisée —
+les callbacks `log` reçoivent des noms de secrets et des cibles, jamais un secret.
+"""
+import base64
+import configparser
+import os
+import secrets as pysecrets
+import string
+import subprocess
+from pathlib import Path
+
+from .config import (ALL_KINDS, COMPOSE_DIR, CONF, DEFAULT_LEN, GEN_KINDS, KEYFILE,
+                     LOCAL, MASTER, META, MIRROR, REF, RENDER_DIR)
+from .envfile import parse_env, write_env
+
+
+class ConfigError(RuntimeError):
+    """Config absente ou incohérente — remonte à l'appelant plutôt que sys.exit,
+    pour que le worker puisse la transformer en résultat de job."""
+
+
+class RotateAborted(RuntimeError):
+    """Un sink a échoué ; les sinks déjà appliqués ont été remis à leur valeur
+    précédente et le store n'a pas été modifié."""
+
+
+class Engine:
+    def __init__(self):
+        self.cfg = self._load_conf()
+        self.data = self._combined()
+
+    # ---- config + valeurs ----
+    @staticmethod
+    def _load_conf() -> dict:
+        cp = configparser.ConfigParser(interpolation=None)
+        cp.optionxform = str
+        if not CONF.exists():
+            raise ConfigError(
+                f"config introuvable: {CONF}\n"
+                f"Partir du modèle : cp secrets.conf.example secrets.conf")
+        cp.read(CONF)
+        out = {}
+        for name in cp.sections():
+            s = cp[name]
+            out[name] = {
+                "kind": s.get("kind", "manual").strip(),
+                "length": int((s.get("length", "") or "0").strip() or 0),
+                "group": s.get("group", "manual").strip(),
+                "sinks": [x.strip() for x in s.get("sinks", "").splitlines() if x.strip()],
+                "norestart": [x.strip() for x in s.get("norestart", "").splitlines() if x.strip()],
+                "compute": s.get("compute", "").strip(),
+                "probe": s.get("probe", "").strip(),
+                "note": s.get("note", "").strip(),
+            }
+        return out
+
+    @staticmethod
+    def _combined() -> dict:
+        data = parse_env(MASTER)
+        data.update(parse_env(LOCAL))
+        return data
+
+    def value_of(self, name: str, data: dict = None) -> str:
+        """Valeur effective d'un secret ; les `computed` dérivent des autres."""
+        data = self.data if data is None else data
+        c = self.cfg.get(name)
+        if c and c["kind"] == "computed" and c["compute"]:
+            transform, _, tpl = c["compute"].partition(" ")
+            interp = REF.sub(lambda m: self.value_of(m.group(1), data), tpl)
+            if transform == "basicauth":
+                return "Basic " + base64.b64encode(interp.encode()).decode()
+            return interp
+        return data.get(name, "")
+
+    # ---- génération ----
+    @staticmethod
+    def gen(kind: str, length: int) -> str:
+        length = length or DEFAULT_LEN.get(kind, 24)
+        alpha = string.ascii_letters + string.digits
+        if kind == "hex":
+            return pysecrets.token_hex(max(1, length // 2))
+        if kind == "b64":
+            return pysecrets.token_urlsafe(length)
+        if kind == "userpass":
+            return "bv:" + "".join(pysecrets.choice(alpha) for _ in range(length))
+        return "".join(pysecrets.choice(alpha) for _ in range(length))
+
+    # ---- rendu des sinks env -> rendered/<svc>.env ----
+    def service_map(self, data: dict = None) -> dict:
+        data = self.data if data is None else data
+        services = {}
+        for name, c in self.cfg.items():
+            for sink in c["sinks"]:
+                if sink.startswith("env:"):
+                    svc, _, var = sink[4:].partition("#")
+                    services.setdefault(svc, {})[var] = self.value_of(name, data)
+        return services
+
+    def render(self, data: dict = None) -> dict:
+        services = self.service_map(data)
+        RENDER_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+        os.chmod(RENDER_DIR, 0o700)
+        for svc, kv in services.items():
+            write_env(RENDER_DIR / f"{svc}.env", kv,
+                      header=f"RENDERED pour '{svc}' par bv-secrets — ne pas éditer ; "
+                             f"modifier secrets.conf / bv-secrets.env puis re-render.")
+        return services
+
+    # ---- applicateurs ----
+    def _run(self, argv, inp=None, cwd=None):
+        return subprocess.run(argv, input=inp, capture_output=True, cwd=cwd)
+
+    def _apply_sink(self, sink: str, value: str, eff: dict, dry: bool, log) -> bool:
+        typ, _, arg = sink.partition(":")
+        if typ == "env":
+            return True                      # matérialisé par render()
+        if dry:
+            log(f"    would apply {typ}: {arg[:60]}")
+            return True
+        if typ == "file":
+            path, _, mode = arg.partition(":")
+            p = Path(path)
+            p.write_text(value)
+            os.chmod(p, int(mode, 8) if mode else 0o600)
+            return True
+        if typ == "linux":
+            user, _, host = arg.partition("@")
+            if host:
+                log(f"    sink linux distant refusé (local-only): {arg}")
+                return False
+            # doas demande l'élévation sur le TTY : réservé au CLI interactif
+            return self._run(["doas", "chpasswd"], inp=f"{user}:{value}\n".encode()).returncode == 0
+        if typ == "mysql":
+            return self._apply_mysql(arg, value, eff)
+        if typ == "cmd":
+            return self._apply_cmd(arg, value, eff)
+        log(f"    type de sink inconnu: {sink}")
+        return False
+
+    def _apply_mysql(self, arg: str, value: str, eff: dict) -> bool:
+        dbuser, _, ctr = arg.partition("@")
+        rootpw = eff.get("MARIADB_ROOT_PASSWORD", "")
+
+        def alter(host):
+            sql = (f"ALTER USER IF EXISTS '{dbuser}'@'{host}' IDENTIFIED BY '{value}'; "
+                   f"FLUSH PRIVILEGES;\n")
+            return self._run(["docker", "exec", "-i", "-e", f"MYSQL_PWD={rootpw}",
+                              ctr, "mariadb", "-u", "root"], inp=sql.encode())
+
+        r = alter("localhost" if dbuser == "root" else "%")
+        if r.returncode != 0 and dbuser == "root":
+            r = alter("%")               # root peut n'exister qu'en 'root'@'%'
+        return r.returncode == 0
+
+    def _apply_cmd(self, arg: str, value: str, eff: dict) -> bool:
+        # {value} est laissé littéral ici puis substitué : REF le résoudrait sinon
+        # vers "" puisqu'aucun secret ne porte ce nom.
+        def sub(m):
+            return m.group(0) if m.group(1) == "value" else self.value_of(m.group(1), eff)
+        cmd = REF.sub(sub, arg).replace("{value}", value)
+        return self._run(["sh", "-c", cmd]).returncode == 0
+
+    def _verify_sink(self, sink: str, value: str, eff: dict) -> bool:
+        typ, _, arg = sink.partition(":")
+        if typ == "mysql":
+            dbuser, _, ctr = arg.partition("@")
+            return self._run(["docker", "exec", "-i", "-e", f"MYSQL_PWD={value}",
+                              ctr, "mariadb", "-u", dbuser, "-e", "SELECT 1"]).returncode == 0
+        return True                      # env/file/linux/cmd : pas de vérif non destructive
+
+    # ---- recréation des conteneurs ----
+    def affected_computed(self, names) -> list:
+        return [cn for cn, c in self.cfg.items()
+                if c["kind"] == "computed" and any(r in names for r in REF.findall(c["compute"]))]
+
+    def services_to_recreate(self, names) -> list:
+        """Services dont le conteneur doit être recréé après application.
+
+        DÉRIVÉ des sinks, jamais déclaré à la main : un sink `env:<svc>#VAR` écrit dans
+        rendered/<svc>.env, que le conteneur ne relit qu'à la création. Sans recréation
+        le process garde l'ancienne valeur. Les `computed` référençant un secret roté
+        comptent aussi. `norestart` exclut les services qui ne lisent la variable qu'à
+        l'init (mariadb : le mot de passe réel est posé par le sink mysql:).
+        """
+        svcs, skip = [], set()
+        for n in list(names) + self.affected_computed(names):
+            c = self.cfg.get(n, {})
+            skip |= set(c.get("norestart", []))
+            for sink in c.get("sinks", []):
+                if sink.startswith("env:"):
+                    svc = sink[4:].partition("#")[0]
+                    if svc not in svcs:
+                        svcs.append(svc)
+        return [s for s in svcs if s not in skip]
+
+    def recreate(self, names, dry: bool, log):
+        for svc in self.services_to_recreate(names):
+            if dry:
+                log(f"    would recreate {svc}")
+                continue
+            # --force-recreate : un `restart` réutilise le conteneur et ne relit pas
+            # env_file, la nouvelle valeur ne serait jamais prise en compte.
+            self._run(["docker", "compose", "up", "-d", "--force-recreate", svc], cwd=COMPOSE_DIR)
+            log(f"    recreate {svc}  ✓")
+
+    # ---- miroir chiffré ----
+    def seal(self, quiet=False):
+        if not KEYFILE.exists():
+            KEYFILE.write_bytes(pysecrets.token_bytes(32))
+            os.chmod(KEYFILE, 0o600)
+        payload = ("# bv-secrets encrypted mirror\n" + MASTER.read_text()
+                   + "\n### .local ###\n" + (LOCAL.read_text() if LOCAL.exists() else "")).encode()
+        r = self._run(["openssl", "enc", "-aes-256-cbc", "-pbkdf2", "-iter", "200000", "-salt",
+                       "-pass", f"file:{KEYFILE}", "-out", str(MIRROR)], inp=payload)
+        if r.returncode:
+            raise RuntimeError(r.stderr.decode())
+        os.chmod(MIRROR, 0o600)
+        if not quiet:
+            print(f"sealed -> {MIRROR} ({MIRROR.stat().st_size} bytes)")
+
+    # ---- meta : dates de dernier set ----
+    @staticmethod
+    def meta() -> dict:
+        return parse_env(META)
+
+    @staticmethod
+    def touch_meta(names):
+        import datetime
+        m = parse_env(META)
+        now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+        for n in names:
+            m[n] = now
+        write_env(META, m)
+
+    # ---- doctor ----
+    def probe_one(self, name: str):
+        """-> (status, detail) avec status 'ok' | 'fail' | 'none'."""
+        c = self.cfg.get(name)
+        if not c:
+            return ("none", "secret inconnu")
+        value = self.value_of(name)
+        if not value:
+            return ("fail", "valeur absente du store")
+        if c["probe"]:
+            def sub(m):
+                return m.group(0) if m.group(1) == "value" else self.value_of(m.group(1))
+            cmd = REF.sub(sub, c["probe"]).replace("{value}", value)
+            rc = self._run(["sh", "-c", cmd]).returncode
+            return ("ok", "probe") if rc == 0 else ("fail", f"probe exit {rc}")
+        for sink in c["sinks"]:
+            if sink.startswith("mysql:"):
+                ok = self._verify_sink(sink, value, self.data)
+                return ("ok", "login mysql") if ok else ("fail", "login mysql refusé")
+        # à défaut : parité store <-> rendered, qui détecte un render en retard
+        for sink in c["sinks"]:
+            if sink.startswith("env:"):
+                svc, _, var = sink[4:].partition("#")
+                if parse_env(RENDER_DIR / f"{svc}.env").get(var) != value:
+                    return ("fail", f"rendered/{svc}.env en retard (re-render)")
+        return ("none", "pas de probe défini")
+
+    def doctor(self, names, log) -> int:
+        meta = self.meta()
+        tally = {"ok": 0, "fail": 0, "none": 0}
+        for n in names:
+            st, detail = self.probe_one(n)
+            tally[st] += 1
+            mark = {"ok": "✓", "fail": "✗", "none": "·"}[st]
+            log(f"{mark} {n:34} {detail:36} (dernier set: {meta.get(n, 'inconnu')})")
+        log(f"\n{tally['ok']} ok, {tally['fail']} KO, {tally['none']} sans probe.")
+        return tally["fail"]
+
+    # ---- sélection ----
+    def select(self, only) -> list:
+        if only:
+            names = [n.strip() for n in only.split(",") if n.strip()] \
+                if isinstance(only, str) else list(only)
+            unknown = [n for n in names if n not in self.cfg]
+            if unknown:
+                raise ConfigError(f"secret inconnu: {', '.join(unknown)}")
+            return names
+        return [n for n, c in self.cfg.items()
+                if c["kind"] in GEN_KINDS and c["group"] == "auto"]
+
+    def plan(self, names, log):
+        for n in names:
+            c = self.cfg[n]
+            gen = "gen new" if c["kind"] in GEN_KINDS else f"({c['kind']})"
+            log(f"• {n}  [{c['kind']}/{c['group']}]  {gen}")
+            for s in c["sinks"]:
+                log(f"    sink  {s}")
+            for cn in self.affected_computed([n]):
+                log(f"    ~> recompute {cn} -> {', '.join(self.cfg[cn]['sinks'])}")
+            for svc in self.services_to_recreate([n]):
+                log(f"    recreate  {svc}")
+
+    # ---- rotate / apply ----
+    def rotate(self, names, do_it: bool, log):
+        targets = [n for n in names if self.cfg[n]["kind"] in GEN_KINDS]
+        for n in (n for n in names if n not in targets):
+            kind = self.cfg[n]["kind"]
+            if kind == "apikey":
+                log(f"skip {n}: CLE API — jamais générée. La régénérer dans l'app, "
+                    f"puis `bv-secrets set {n} <valeur>`.")
+            else:
+                log(f"skip {n}: kind={kind} (non générable — `set` manuellement)")
+        if not targets:
+            log("rien à roter.")
+            return
+        self.plan(targets, log)
+        if not do_it:
+            log("\n(dry-run — rien appliqué. Ajouter --yes pour exécuter.)")
+            return
+
+        old = {n: self.data.get(n, "") for n in targets}
+        new = {n: self.gen(self.cfg[n]["kind"], self.cfg[n]["length"]) for n in targets}
+        self._apply_live_sinks(targets, old, new, log)
+
+        m = parse_env(MASTER)
+        m.update({n: new[n] for n in targets})
+        write_env(MASTER, m)
+        self.touch_meta(targets)
+        self.data = self._combined()
+        self.render()
+        log("rendered/*.env mis à jour.")
+        self.recreate(targets, False, log)
+        self.seal(quiet=True)
+        log(f"\n✓ rotate terminé : {', '.join(targets)}. (valeurs via `bv-secrets get <NAME>`)")
+
+    def _apply_live_sinks(self, targets, old, new, log):
+        """Applique les sinks non-env avec rollback. root en dernier, pour que les
+        ALTER précédents s'authentifient encore avec l'ancien mot de passe root."""
+        order = sorted(targets, key=lambda n: 1 if n == "MARIADB_ROOT_PASSWORD" else 0)
+        eff = dict(self.data)
+        applied = []
+        try:
+            for n in order:
+                for sink in self.cfg[n]["sinks"]:
+                    if sink.startswith("env:"):
+                        continue
+                    log(f"apply {n} -> {sink}")
+                    if not self._apply_sink(sink, new[n], eff, False, log):
+                        raise RuntimeError(f"apply FAILED: {n} -> {sink}")
+                    applied.append((n, sink, old[n]))
+                    if not self._verify_sink(sink, new[n], eff):
+                        raise RuntimeError(f"verify FAILED: {n} -> {sink}")
+                eff[n] = new[n]
+        except Exception as e:
+            log(f"\n✗ {e}\nROLLBACK des sinks déjà appliqués…")
+            reff = dict(self.data)
+            for n, sink, previous in reversed(applied):
+                self._apply_sink(sink, previous, reff, False, log)
+            raise RotateAborted("rotate avorté — store inchangé.")
+
+    def apply(self, names, do_it: bool, log):
+        """Pousse les valeurs COURANTES vers les sinks, sans régénérer."""
+        self.render()
+        log("rendered/*.env réécrits.")
+        if not do_it:
+            log("(env appliqué. Ajouter --yes pour pousser aussi linux/mysql/cmd + restarts.)")
+            return
+        eff = dict(self.data)
+        for n in names:
+            for sink in self.cfg[n]["sinks"]:
+                if sink.startswith("env:"):
+                    continue
+                log(f"apply {n} -> {sink}")
+                self._apply_sink(sink, self.value_of(n), eff, False, log)
+        self.recreate(names, False, log)
+        log("✓ apply terminé.")
+
+    # ---- cohérence ----
+    def check(self) -> list:
+        """-> liste des problèmes (chaînes). Vide = config saine."""
+        from .config import GROUPS, SINK_TYPES, looks_like_apikey
+        problems = []
+        for n, c in self.cfg.items():
+            if c["kind"] not in ALL_KINDS:
+                problems.append(f"BAD kind on {n}: {c['kind']}")
+            if c["group"] not in GROUPS:
+                problems.append(f"BAD group on {n}: {c['group']}")
+            if looks_like_apikey(n) and c["kind"] != "apikey":
+                problems.append(f"NAME/KIND {n}: nom de clé d'app tierce mais kind={c['kind']}")
+            if c["kind"] == "apikey" and not looks_like_apikey(n):
+                problems.append(f"NAME/KIND {n}: kind=apikey mais le nom ne contient ni API ni TOKEN")
+            if c["kind"] != "computed" and not self.data.get(n):
+                problems.append(f"MISSING value: {n}")
+            problems += [f"BAD sink on {n}: {s}" for s in c["sinks"]
+                         if s.split(":", 1)[0] not in SINK_TYPES]
+        for p in [MASTER, LOCAL] + list(RENDER_DIR.glob("*.env")):
+            if p.exists() and oct(p.stat().st_mode & 0o777) != "0o600":
+                problems.append(f"PERM {p} is {oct(p.stat().st_mode & 0o777)}, want 0o600")
+        return problems
+
+    def render_parity(self) -> list:
+        """Écarts entre ce que render() écrirait et les rendered actuels."""
+        problems = []
+        for svc, kv in self.service_map().items():
+            cur = parse_env(RENDER_DIR / f"{svc}.env")
+            problems += [f"{svc}: variable manquante {k}" for k in kv if k not in cur]
+            problems += [f"{svc}: valeur différente pour {k}" for k in kv
+                         if k in cur and cur[k] != kv[k]]
+            problems += [f"{svc}: variable en trop {k} (absente de la config)" for k in cur if k not in kv]
+        return problems

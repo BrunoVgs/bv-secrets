@@ -1,0 +1,192 @@
+<!doctype html><html lang=fr><head><meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1"><title>bv-secrets</title>
+<link rel=preconnect href="https://fonts.googleapis.com">
+<link rel=preconnect href="https://fonts.gstatic.com" crossorigin>
+<link rel=stylesheet href="https://fonts.googleapis.com/css2?family=Michroma&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
+<link rel=stylesheet href="static/__V__/css/tokens.css">
+<link rel=stylesheet href="static/__V__/css/base.css">
+<link rel=stylesheet href="static/__V__/css/layout.css">
+<link rel=stylesheet href="static/__V__/css/components.css">
+<link rel=stylesheet href="static/__V__/css/views.css">
+<link rel=stylesheet href="static/__V__/css/animations.css">
+<link rel=icon type="image/png" href="static/__V__/img/favicon.png">
+</head><body><div class="app">
+
+<aside class="side">
+  <div class="brand"><img class="mark" src="static/__V__/img/logo.png" alt="bv-secrets" width="36" height="36">
+    <div><div class="n">BV&#8209;SECRETS</div><div class="v">gestionnaire de secrets</div></div></div>
+  <!--BV:NAV-->
+  <div class="spacer"></div>
+  <div class="daemon"><div class="hd"><span class="led"></span><span class="t">WORKER ACTIF</span></div></div>
+  <a class="sidelink" href="/">← Homepage</a>
+  <button class="sidelink" id="logout">⏻ Déconnexion</button>
+</aside>
+
+<main>
+  <header class="hd">
+    <div style="flex:1;min-width:0">
+      <div class="ttl" id="viewTitle">Vue d'ensemble</div>
+      <div class="sub hidden" id="viewSub"></div>
+    </div>
+    <div class="who"><span class="av">BV</span><span>admin</span></div>
+  </header>
+
+  <!-- VUE D'ENSEMBLE -->
+  <section class="view" data-view="overview">
+    <div class="stats" id="ovStats"></div>
+    <div class="duo">
+      <div class="panel">
+        <div class="ph"><span class="sq amber"></span><span class="t">DERNIERS CHANGEMENTS</span></div>
+        <div id="ovRecent"></div>
+      </div>
+      <div class="panel">
+        <div class="ph"><span class="sq"></span><span class="t">ACTIONS</span></div>
+        <div class="pb" style="display:flex;flex-direction:column;gap:10px">
+          <button class="btn big solid" id="rotauto" data-busy>⟳ Roter le groupe auto (<!--BV:AUTOCOUNT-->)</button>
+          <button class="btn big" id="doctor" data-busy>🩺 Doctor</button>
+          <div class="cli" id="jobstatus"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- COFFRE -->
+  <section class="view hidden" data-view="coffre">
+    <div class="bar">
+      <input class="search" id="search" placeholder="Rechercher…">
+      <span id="kindFilters" class="bar"></span>
+      <span class="cli" id="coffreCount"></span>
+    </div>
+    <div class="panel">
+      <div class="row g-coffre head" id="coffreHead"><div></div>
+        <div><span class="srt" data-sort="name">SECRET<span class="ar"></span></span></div>
+        <div><span class="srt" data-sort="kind">FORMAT<span class="ar"></span></span></div>
+        <div><span class="srt" data-sort="group">ROTATION<span class="ar"></span></span></div>
+        <div><span class="srt" data-sort="value">VALEUR<span class="ar"></span></span></div>
+        <div><span class="srt" data-sort="last">DERNIER SET<span class="ar"></span></span></div>
+        <div style="text-align:right"></div></div>
+      <div id="coffreRows"></div>
+    </div>
+    <div class="cli sorthint">Clic : trier sur la colonne · Maj+clic : ajouter un critère secondaire</div>
+
+    <details class="leg" id="leg"><summary>Légende
+      <span class="hint">— colonnes et pastilles</span></summary><div class="legbody">
+      <div class="legcol"><h4>FORMAT</h4>
+        <div><b style="color:#8fbaff">clé API</b><i>émise par une app tierce, jamais générée ici</i></div>
+        <div><b>password</b><i>mot de passe aléatoire</i></div>
+        <div><b>hex</b><i>hexadécimal aléatoire</i></div>
+        <div><b>b64</b><i>base64 aléatoire</i></div>
+        <div><b>passphrase</b><i>longue suite alphanumérique</i></div>
+        <div><b>userpass</b><i>paire user:motdepasse</i></div>
+        <div><b>opaque</b><i>posée à la main, jamais générée</i></div>
+        <div><b>computed</b><i>dérivée d'autres secrets, jamais stockée</i></div>
+      </div>
+      <div class="legcol"><h4>ROTATION</h4>
+        <div><b>auto</b><i>rotée par « Roter le groupe auto »</i></div>
+        <div><b>si nommé</b><i>rotée uniquement si elle est ciblée</i></div>
+        <div><b>si nommé ⚠</b><i>idem, mais impactant</i></div>
+        <div><b>jamais</b><i>jamais rotée automatiquement</i></div>
+      </div>
+      <div class="legcol"><h4>SINKS</h4>
+        <div><b>env</b><i>rendered/&lt;service&gt;.env</i></div>
+        <div><b>file</b><i>un fichier</i></div>
+        <div><b>mysql</b><i>ALTER USER dans MariaDB</i></div>
+        <div><b>cmd</b><i>une commande de l'app</i></div>
+        <div><b>linux</b><i>compte Linux, CLI seulement</i></div>
+      </div>
+      <div class="legcol"><h4>PASTILLE</h4>
+        <div><b style="color:#3fbf5f">●</b><i>probe OK</i></div>
+        <div><b style="color:#d63a42">●</b><i>probe en échec</i></div>
+        <div><b style="color:#d9a13b">●</b><i>aucune valeur en store</i></div>
+        <div><b style="color:#666">●</b><i>non vérifiée, lancer Doctor</i></div>
+      </div>
+    </div></details>
+  </section>
+
+  <!-- ROTATION -->
+  <section class="view hidden" data-view="rotation">
+    <div class="stats three" id="rotStats"></div>
+    <div class="panel">
+      <div class="ph"><span class="sq"></span><span class="t">ROTABLES</span></div>
+      <div class="row g-rot head" id="rotHead">
+        <div><span class="srt" data-sort="name">SECRET<span class="ar"></span></span></div>
+        <div><span class="srt" data-sort="kind">FORMAT<span class="ar"></span></span></div>
+        <div><span class="srt" data-sort="group">POLITIQUE<span class="ar"></span></span></div>
+        <div><span class="srt" data-sort="last">DERNIÈRE<span class="ar"></span></span></div>
+        <div style="text-align:right"></div></div>
+      <div id="rotRows"></div>
+    </div>
+  </section>
+
+  <!-- COMPTES -->
+  <section class="view hidden" data-view="comptes">
+    <div class="panel">
+      <div class="ph"><span class="sq"></span><span class="t">COMPTES DU PORTAIL</span>
+        <button class="btn" id="usersReload" data-busy>rafraîchir</button></div>
+      <div class="row g-user head"><div>COMPTE</div><div>RÔLE</div><div>CRÉÉ</div>
+        <div style="text-align:right"></div></div>
+      <div id="userRows"></div>
+    </div>
+    <div class="cli">guest / trusted / admin sont des RÔLES portés par ces comptes.
+      Le détail service par service est dans « Accès &amp; rôles ».</div>
+  </section>
+
+  <!-- ACCÈS -->
+  <section class="view hidden" data-view="acces">
+    <div class="panel">
+      <div class="ph"><span class="sq"></span><span class="t">MATRICE SERVICE × RÔLE</span>
+        <span class="note">admin = superutilisateur</span></div>
+      <table id="accessTable">
+        <thead><tr><th>service</th><th>admin</th><th>trusted</th><th>guest</th><th>surfaces</th></tr></thead>
+        <tbody><!--BV:ACCESS--></tbody>
+      </table>
+    </div>
+    <div class="bar">
+      <button class="btn big solid" id="accessSave" data-busy>💾 Appliquer</button>
+      <span class="cli" id="accessStatus"></span>
+    </div>
+  </section>
+
+  <!-- DOCS -->
+  <section class="view hidden" data-view="docs">
+    <div class="panel docs"><div class="pb">
+<div class="grid"><div>
+<dl>
+<dt>rotate [--only N] --yes</dt><dd>Régénère <b>et applique partout</b> (env, mysql, cmd) + recrée les services concernés. Sans <span class=k>--only</span> : tout le groupe <span class=k>auto</span>.</dd>
+<dt>apply [--only N] --yes</dt><dd>Pousse les valeurs <b>actuelles</b> vers les cibles (sans régénérer). Utile après un <span class=k>set</span>.</dd>
+<dt>get NAME</dt><dd>Imprime une valeur (ici : bouton <b>voir</b> dans le tiroir).</dd>
+<dt>set NAME VALEUR</dt><dd>Écrit/écrase une valeur dans le store <span class=k>bv-secrets.env</span>.</dd>
+<dt>gen NAME [--kind --length]</dt><dd>Génère une valeur aléatoire pour un secret.</dd>
+<dt>plan [--only N]</dt><dd>Montre ce que <span class=k>rotate</span> ferait (dry-run, aucune valeur).</dd>
+<dt>doctor [--only N]</dt><dd>Vérifie que chaque valeur stockée <b>marche vraiment</b> (login MySQL, API Pi-hole, filebrowser, comptes du portail…). Ici : bouton 🩺, résultat dans la colonne <b>état</b>.</dd>
+</dl></div><div>
+<dl>
+<dt>list</dt><dd>Inventaire : nom, type, groupe, présence, services. Aucune valeur.</dd>
+<dt>render</dt><dd>Réécrit les <span class=k>rendered/&lt;svc&gt;.env</span> consommés par docker-compose.</dd>
+<dt>add NAME --sink …</dt><dd>Enregistre un nouveau secret + ses cibles en une ligne.</dd>
+<dt>check · verify-render</dt><dd>Cohérence config + perms 0600 ; parité des rendus.</dd>
+<dt>seal · open</dt><dd>Miroir chiffré du store (backup hors-machine).</dd>
+<dt>audit</dt><dd>Scanne le repo à la recherche de valeurs en clair.</dd>
+</dl></div></div>
+<h3>Concepts</h3>
+<dl>
+<dt>sinks</dt><dd><span class=k>env:svc#VAR</span> (fichier .env par service) · <span class=k>file:/chemin</span> · <span class=k>linux:user[@host]</span> (chpasswd) · <span class=k>mysql:user@conteneur</span> (ALTER USER) · <span class=k>cmd:…</span> (<span class=k>{value}</span> = nouvelle valeur, <span class=k>{AUTRE}</span> = autre secret).</dd>
+<dt>groupes</dt><dd><span class=k>auto</span> = roté par défaut · <span class=k>app</span> / <span class=k>careful</span> = roté explicitement · <span class=k>manual</span> = jamais généré (posé à la main).</dd>
+<dt>computed</dt><dd>Secret dérivé d'autres (ex. <span class=k>AUTHSF_DATABASE_URL</span>, qui contient <span class=k>MARIADB_APP_PASSWORD</span>) — se recalcule tout seul.</dd>
+<dt>recréation</dt><dd>Un conteneur ne relit son <span class=k>env_file</span> qu'à la création : tout service ciblé par un sink <span class=k>env:</span> est donc <b>recréé</b> après application. Déduit des sinks, jamais déclaré à la main.</dd>
+<dt>probe</dt><dd>Commande de vérification déclarée par secret (<span class=k>doctor</span>) : teste la valeur contre la vraie app, exit 0 = ✓. Jamais destructif, n'affiche aucune valeur.</dd>
+<dt>worker</dt><dd>Le <b>seul</b> composant privilégié (docker + store rw). Le dashboard n'a aucun privilège : il dépose un job dans le spool, le worker l'exécute et renvoie un log <b>sans valeur</b>.</dd>
+<dt>accès</dt><dd>La carte <b>Accès</b> édite <span class=k>access/access.conf</span> (source unique « qui voit quoi ») ; le worker relance <span class=k>render-access.py</span> puis recrée Caddy et les homepages.</dd>
+</dl>
+    </div></div>
+  </section>
+</main>
+
+<div id="drawerHost"></div>
+
+<div id="jobpanel"><div class="jh"><span class="t">CONSOLE WORKER</span>
+  <button class="btn" id="jobclose">✕</button></div><div id="joblog"></div></div>
+</div>
+<script id="bv-boot" type="application/json"><!--BV:BOOT--></script>
+<script type="module" src="static/__V__/js/boot.js"></script>
+</body></html>

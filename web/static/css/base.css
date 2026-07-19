@@ -1,0 +1,20 @@
+/* Reset minimal, typographie et utilitaires transverses. */
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;background:var(--bg);color:var(--tx);font-family:var(--sans)}
+body{background:
+  radial-gradient(1200px 600px at 15% -10%,rgba(192,36,44,.10),transparent 60%),
+  radial-gradient(900px 500px at 110% 110%,rgba(192,36,44,.06),transparent 55%),var(--bg);
+  min-height:100vh;font-size:14px;line-height:1.5}
+a{color:var(--acc2);text-decoration:none;transition:color var(--t-fast)}
+a:hover{color:var(--acc3)}
+button{font:inherit;cursor:pointer}
+
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-thumb{background:rgba(255,255,255,.10);border-radius:6px;border:2px solid var(--bg)}
+::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,.18)}
+::-webkit-scrollbar-track{background:transparent}
+
+.hidden{display:none !important}
+.mono{font-family:var(--mono)}
+.dim{color:var(--dim)}
+.cli{font-family:var(--mono);font-size:10.5px;color:var(--dim2)}
