@@ -1,7 +1,7 @@
 """Matrice service × rôle, lue depuis access/access.conf (monté read-only).
 
-L'écriture passe par un job `access` : le worker relance render-access.py puis
-recrée Caddy et les homepages.
+L'écriture passe par un job `access` : le worker relance le rendu, puis recrée le
+reverse-proxy et redémarre les services qui consomment la matrice.
 """
 import configparser
 

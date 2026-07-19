@@ -176,7 +176,7 @@
 <dt>recréation</dt><dd>Un conteneur ne relit son <span class=k>env_file</span> qu'à la création : tout service ciblé par un sink <span class=k>env:</span> est donc <b>recréé</b> après application. Déduit des sinks, jamais déclaré à la main.</dd>
 <dt>probe</dt><dd>Commande de vérification déclarée par secret (<span class=k>doctor</span>) : teste la valeur contre la vraie app, exit 0 = ✓. Jamais destructif, n'affiche aucune valeur.</dd>
 <dt>worker</dt><dd>Le <b>seul</b> composant privilégié (docker + store rw). Le dashboard n'a aucun privilège : il dépose un job dans le spool, le worker l'exécute et renvoie un log <b>sans valeur</b>.</dd>
-<dt>accès</dt><dd>La carte <b>Accès</b> édite <span class=k>access/access.conf</span> (source unique « qui voit quoi ») ; le worker relance <span class=k>render-access.py</span> puis recrée Caddy et les homepages.</dd>
+<dt>accès</dt><dd>La carte <b>Accès</b> édite <span class=k>access/access.conf</span> (source unique « qui voit quoi ») ; le worker relance le rendu, recrée le reverse-proxy puis redémarre les services concernés.</dd>
 </dl>
     </div></div>
   </section>
