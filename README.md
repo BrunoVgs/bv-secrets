@@ -5,185 +5,306 @@
 <h1 align="center">bv-secrets</h1>
 
 <p align="center">
-  Gestionnaire de secrets et de rotation côté serveur, sans dépendance.<br>
-  Il ne se contente pas de stocker un secret : il sait le <b>régénérer et l'appliquer</b>
-  partout où il vit.
+  Control plane for a self-hosted server, no dependencies.<br>
+  Secrets and their rotation, who can reach which service, and the portal accounts —
+  one declarative source, one privileged worker.
 </p>
 
 <p align="center">
   <img alt="Python 3.11+" src="https://img.shields.io/badge/python-3.11%2B-3776ab">
-  <img alt="Sans dépendance" src="https://img.shields.io/badge/d%C3%A9pendances-aucune-3fbf5f">
-  <img alt="Licence MIT" src="https://img.shields.io/badge/licence-MIT-c0242c">
+  <img alt="No dependencies" src="https://img.shields.io/badge/dependencies-none-3fbf5f">
+  <img alt="MIT licence" src="https://img.shields.io/badge/licence-MIT-c0242c">
 </p>
 
 ---
 
-## Ce que c'est
+## What it is
 
-Un coffre personnel (Bitwarden, Dashlane) garde des mots de passe pour un humain.
-bv-secrets gère les secrets d'**infrastructure** et ferme la boucle : quand un mot
-de passe de base de données est roté, l'utilisateur SQL est réellement modifié, les
-fichiers `.env` sont réécrits, et les conteneurs concernés sont recréés pour les
-relire. Le tout depuis une source déclarative unique.
+It started as a secret manager and grew into the control plane for the whole
+box. Three things are administered here, and they turned out to be the same
+problem: a declarative source of truth, and something privileged that makes
+reality match it.
 
-Sans rotation appliquée, un secret « roté » n'est qu'une nouvelle chaîne dans un
-fichier pendant que le service continue d'utiliser l'ancienne.
-
-## Ce que ça n'est pas
-
-Ni un coffre d'équipe, ni un serveur de secrets réseau (Vault, Infisical). Pas de
-démon exposé, pas de base, pas de cluster. Un fichier de config, un store en
-`0600`, et un binaire Python de la bibliothèque standard.
-
-## Modèle de sécurité
-
-C'est le cœur du projet : les privilèges sont **asymétriques**.
-
-| Composant | Où | Privilèges |
+| Domain | Source of truth | Applied to |
 |---|---|---|
-| CLI | hôte, interactif | store rw, `doas` pour les comptes Linux |
-| Worker | hôte, service système | docker + store rw, **aucun réseau entrant** |
-| Dashboard web | conteneur | store **read-only**, aucun accès docker |
+| Secrets and rotation | `secrets.conf` | `.env` files, SQL users, Linux accounts, app commands |
+| Access | `access.conf` | Caddy gates, homepage tiles per role, console tiles |
+| Portal accounts | the auth service's database | roles, deletion, password reset |
 
-Le dashboard n'exécute **aucune** rotation. Il dépose un descripteur de job dans
-un répertoire de spool ; le worker le ramasse, l'exécute, et réécrit un journal
-**sans aucune valeur**. C'est ce qui permet d'exposer l'interface derrière un
-reverse-proxy sans lui donner le moindre privilège : la compromission du conteneur
-web ne donne ni docker, ni écriture sur le store.
+The part that matters is that the loop is closed. A personal vault (Bitwarden,
+Dashlane) stores passwords for a human to read back. Here, when a database
+password is rotated, the SQL user is actually altered, the `.env` files are
+rewritten, and the affected containers are recreated so they pick up the new
+value. Without that last step, a "rotated" secret is just a new string in a file
+while the service keeps authenticating with the old one.
 
-Aucune valeur n'est jamais journalisée. Les seules commandes qui en impriment une
-sont `get` et `open`, explicitement.
+The same reasoning pushed accounts in. Running a second web backoffice next to
+this one, with its own session handling and its own database access, only added
+attack surface for something the worker could already do through the app's own
+console commands. So the backoffice went away and the accounts moved here.
 
-## Deux axes orthogonaux
+## Onboarding an app
 
-La distinction structurante, à ne pas remélanger :
-
-- **`kind`** — le FORMAT de la valeur, ce qu'elle *est* :
-  `password`, `hex`, `b64`, `passphrase`, `userpass`, `opaque`, `computed`, `apikey`
-- **`group`** — la POLITIQUE de rotation, *quand* on la régénère :
-  `auto`, `app`, `careful`, `manual`
-
-Une `apikey` est émise par une application tierce. Elle n'est **jamais** générée :
-écrire une chaîne aléatoire produirait une clé que l'application refuse, et le
-service tombe. Un nom contenant `API` ou `TOKEN` impose ce format, et le passage
-vers un format générable est refusé à trois endroits indépendants — l'interface,
-l'API et le worker.
-
-## Démarrage
+The central move: you install an application, it drops yet another `.env`, and you
+bring it under management in one command. `adopt` scans the file, picks out the
+secrets (hosts, ports, log levels are ignored), proposes a declaration, then writes
+it to `secrets.conf` and imports the values in place.
 
 ```sh
-git clone https://github.com/<compte>/bv-secrets.git
-cd bv-secrets
-cp secrets.conf.example secrets.conf     # décrire ses propres secrets
+bv-secrets adopt /srv/grafana/.env --prefix GRAFANA_
+```
+```
+From /srv/grafana/.env — 3 secret(s) detected:
+  + GRAFANA_GF_SECURITY_ADMIN_PASSWORD password  app     <- GF_SECURITY_ADMIN_PASSWORD (21 c)
+  + GRAFANA_GF_DATABASE_PASSWORD       hex       app     <- GF_DATABASE_PASSWORD (32 c)
+  + GRAFANA_GF_AUTH_JWT_API_TOKEN      apikey    manual  <- GF_AUTH_JWT_API_TOKEN (39 c)
+  · ignored (config): GF_SERVER_HTTP_PORT, GF_SERVER_DOMAIN, GF_SECURITY_ADMIN_USER, GF_LOG_LEVEL
 
-export BV_SECRETS_DIR=/opt/bv-secrets    # store, rendus, miroir chiffré
-bin/bv-secrets list                      # inventaire, aucune valeur
-bin/bv-secrets plan                      # ce qu'une rotation ferait
-bin/bv-secrets rotate --yes              # régénère et applique le groupe auto
-bin/bv-secrets doctor                    # vérifie que chaque valeur MARCHE
+Re-run with --yes to declare these secrets and import their values.
 ```
 
-`secrets.conf` n'est pas versionné : il décrit l'infrastructure (services,
-utilisateurs SQL, commandes de vérification). Seul le modèle l'est.
+That run is a dry run; nothing is written until you add `--yes`. The kind is
+guessed (a hex value gives `hex`, a name containing `API` or `TOKEN` gives
+`apikey`, which is never rotated) and the default group is `app`, never `auto` —
+a third-party secret does not enter automatic rotation before someone has looked
+at it. Everything stays editable afterwards, from the dashboard or by hand in
+`secrets.conf`.
+
+Once adopted, the secret behaves like any other: `rotate` regenerates the value and
+writes it back into the app's `.env`, `status` watches for drift.
+
+### Under the hood
+
+`adopt` is three smaller commands composed together, each usable on its own:
+
+```sh
+bv-secrets scan /srv/app/.env          # which keys could I manage?
+bv-secrets import --all                # pull in-place values into the store
+bv-secrets status                      # in sync, drifted, or missing?
+```
+
+A location is a two-way connector: bv-secrets can read a value where it lives as
+well as write it there. `status` re-reads every location and reports what changed
+outside the tool. Writes are surgical — only the targeted value changes, comments,
+ordering and indentation stay byte-for-byte identical.
+
+Location schemes:
+
+| Scheme | Target | reads | writes |
+|---|---|:-:|:-:|
+| `envfile:/path#KEY` | one key in a `KEY=VALUE` file | ✓ | ✓ |
+| `regex:/path#<pattern>` | group 1 of a pattern, any format | ✓ | ✓ |
+| `file:/path` | the whole file as the value | ✓ | ✓ |
+| `json:/path#a.b.c` | a value at a JSON path | ✓ | — |
+| `mysql:user@container` | a SQL account password (`ALTER USER`) | — | ✓ |
+| `cmd:…` `linux:user` | app command · Linux account | — | ✓ |
+
+To write a value inside YAML/TOML/INI, `regex:` is the catch-all until dedicated
+resolvers exist (`api_password:\s*(\S+)`).
+
+## What it isn't
+
+Not a team vault, not a networked secret server (Vault, Infisical). No exposed
+daemon, no database, no cluster. One config file, a `0600` store, and a Python
+binary built on the standard library.
+
+## Security model
+
+This is the core of the project: privileges are asymmetric.
+
+| Component | Where | Privileges |
+|---|---|---|
+| CLI | host, interactive | store rw, `doas` for Linux accounts |
+| Worker | host, system service | docker + store rw, no inbound network |
+| Web dashboard | container | store read-only, no docker access |
+
+The dashboard performs no privileged action itself — not a rotation, not an access
+change, not an account edit. It drops a job descriptor in a spool directory; the
+worker picks it up, runs it, and writes back a log containing no values. That is
+what makes it safe to put the UI behind a reverse proxy without granting it any
+privilege: compromising the web container gives neither docker, nor write access to
+the store, nor the database.
+
+Values are never logged. The only commands that print one are `get` and `open`,
+and only when asked.
+
+## Two orthogonal axes
+
+The distinction that holds the model together, not to be collapsed back:
+
+- `kind` — the FORMAT of the value, what it *is*:
+  `password`, `hex`, `b64`, `passphrase`, `userpass`, `opaque`, `computed`, `apikey`
+- `group` — the rotation POLICY, *when* it gets regenerated:
+  `auto`, `app`, `careful`, `manual`
+
+An `apikey` is issued by a third-party application. It is never generated: writing
+a random string there would produce a key the application rejects, and the service
+goes down. A name containing `API` or `TOKEN` forces that kind, and switching it to
+a generatable kind is refused in three independent places — the UI, the API and
+the worker.
+
+## Getting started
+
+```sh
+git clone https://github.com/<account>/bv-secrets.git
+cd bv-secrets
+cp secrets.conf.example secrets.conf     # describe your own secrets
+
+export BV_SECRETS_DIR=/opt/bv-secrets    # store, renders, encrypted mirror
+bin/bv-secrets list                      # inventory, no values
+bin/bv-secrets plan                      # what a rotation would do
+bin/bv-secrets rotate --yes              # regenerate and apply the auto group
+bin/bv-secrets doctor                    # check that each value actually WORKS
+```
+
+`secrets.conf` is not versioned: it describes the infrastructure (services, SQL
+users, probe commands). Only the template is.
 
 ### Dashboard
 
 ```sh
 docker build -t bv-secrets-web .
 docker run -d --name bv-secrets-web --read-only -u 1000:1000 -p 8000:8000 \
-  -e BV_DASH_PASSWORD='<mot de passe applicatif>' \
+  -e BV_DASH_PASSWORD='<application password>' \
   -v "$PWD/secrets.conf:/app/secrets.conf:ro" \
   -v /opt/bv-secrets:/opt/bv-secrets:ro \
   -v /opt/bv-secrets/spool:/spool:rw \
   bv-secrets-web
 ```
 
-Le `secrets.conf` doit être le **même fichier** pour le worker et le conteneur :
-le worker le réécrit lors d'un changement de format depuis l'interface. Le monter,
-ne jamais s'appuyer sur la copie embarquée dans l'image.
+The worker and the container must share the same `secrets.conf` file: the worker
+rewrites it when a kind changes from the UI. Mount it, never rely on the copy baked
+into the image.
 
-Un exemple de service compose et l'unité OpenRC du worker sont dans
-[`docs/`](docs/) et [`deploy/`](deploy/).
+An example compose service and the worker's OpenRC unit are in [`docs/`](docs/)
+and [`deploy/`](deploy/).
 
-## Commandes
+## Access
 
-| Commande | Effet |
+`access.conf` answers one question — which role reaches which service — and every
+consumer is generated from it: the Caddy gate snippets, the homepage tiles for each
+role, the console tile visibility. Editing a generated file by hand is always
+wrong; the next render overwrites it.
+
+Roles are hierarchical (`guest < trusted < admin`), and admin passes every gate
+whether it is listed or not. A service can drive up to three surfaces, and an empty
+key means that surface simply does not exist for it. Unions are computed rather
+than declared: the console's static gate is the union of the roles of the tiles it
+contains.
+
+The matrix and its renderer live with the deployment, not in this repository —
+`$BV_COMPOSE_DIR/access/`, pointed at by `BV_ACCESS_CONF`. bv-secrets drives them:
+the dashboard posts a change, the worker calls the renderer, then recreates the
+proxy and restarts whatever consumes the matrix.
+
+```sh
+access/render-access.py show            # resolved matrix
+access/render-access.py caddy --check   # is the Caddy region up to date?
+```
+
+The renderer only writes files. Reloading Caddy and restarting homepage are separate
+steps the worker takes deliberately, so a render is never a deployment by accident.
+The proxy is recreated rather than restarted: its configuration is mounted file by
+file, and a plain restart would re-read the old one.
+
+## Accounts
+
+With `BV_AUTH_SERVICE` set, the dashboard lists the auth portal's accounts, changes
+their roles and deletes them. It does this by running the application's own console
+commands through the worker, so there is no second piece of code that knows the user
+schema and no database credential in the web container. Passwords are never read.
+The last-admin guard lives in the Symfony command, which is the only place that can
+enforce it correctly.
+
+Left empty, `BV_AUTH_SERVICE` disables the feature rather than pointing at some
+arbitrary service.
+
+## Commands
+
+| Command | Effect |
 |---|---|
-| `list` | inventaire : nom, format, groupe, présence, services |
-| `check` | cohérence de la config, valeurs présentes, permissions `0600` |
-| `plan` | dry-run d'une rotation, aucune valeur touchée |
-| `rotate [--only N] --yes` | régénère **et applique partout**, avec rollback |
-| `apply [--only N] --yes` | pousse les valeurs actuelles sans régénérer |
-| `doctor [--only N]` | vérifie chaque valeur contre l'application réelle |
-| `render` | réécrit les `rendered/<service>.env` |
-| `get` / `set` / `gen` | lecture, écriture, génération d'une valeur |
-| `add` | enregistre un nouveau secret et ses cibles |
-| `seal` / `open` | miroir chiffré du store, pour sauvegarde hors machine |
-| `audit` | cherche des valeurs gérées présentes en clair ailleurs |
-| `verify-render` | vérifie que `render()` reproduit les rendus actuels |
+| `list` | inventory: name, kind, group, presence, services |
+| `check` | config consistency, values present, `0600` permissions |
+| `plan` | dry run of a rotation, no value touched |
+| `rotate [--only N] --yes` | regenerate and apply everywhere, with rollback |
+| `apply [--only N] --yes` | push current values without regenerating |
+| `doctor [--only N]` | check each value against the real application |
+| `render` | rewrite the `rendered/<service>.env` files |
+| `adopt <file> [--prefix P_]` | onboard an app: detect its secrets, declare and import |
+| `scan <file>` | list the keys of an existing `.env` to help declare them |
+| `import [NAME\|--all]` | adopt values already in place: read them where they live → store |
+| `status` | compare the store to in-place values, report drift |
+| `get` / `set` / `gen` | read, write, generate a value |
+| `add` | register a new secret and its targets |
+| `seal` / `open` | encrypted mirror of the store, for off-machine backup |
+| `audit` | look for managed values sitting in cleartext elsewhere |
+| `verify-render` | check that `render()` reproduces the current renders |
 
-## Rotation : ce qui se passe réellement
+## What rotation actually does
 
-`rotate` n'écrit dans le store qu'**après** que tous les sinks vivants ont été
-appliqués et vérifiés. Si l'un échoue, les précédents sont remis à leur valeur
-antérieure et le store reste inchangé — pas de secret à moitié roté.
+`rotate` writes to the store only after every live sink has been applied and
+verified. If one fails, the previous ones are put back to their earlier value and
+the store is left untouched. There is no half-rotated secret.
 
-L'ordre compte : le mot de passe root de la base est appliqué en dernier, pour que
-les `ALTER USER` précédents s'authentifient encore avec l'ancien.
+Order matters: the database root password is applied last, so that the preceding
+`ALTER USER` statements can still authenticate with the old one.
 
-Les services à recréer sont **déduits** des sinks, jamais déclarés à la main : un
-conteneur ne relit son `env_file` qu'à la création, donc tout service ciblé par un
-sink `env:` est recréé. Les secrets `computed` qui référencent une valeur rotée
-entraînent aussi la recréation de leurs propres cibles.
+Services to recreate are derived from the sinks, never declared by hand: a
+container only re-reads its `env_file` at creation time, so any service targeted by
+an `env:` sink gets recreated. `computed` secrets that reference a rotated value
+also pull their own targets into the recreation set.
 
 ## Configuration
 
-Tous les chemins ont une valeur par défaut et se surchargent par environnement :
+Every path has a default and can be overridden through the environment:
 
-| Variable | Défaut | Rôle |
+| Variable | Default | Role |
 |---|---|---|
-| `BV_SECRETS_DIR` | `/opt/bv-secrets` | store, rendus, miroir chiffré |
-| `BV_SECRETS_CONF` | `<projet>/secrets.conf` | source déclarative |
-| `BV_SPOOL` | `$BV_SECRETS_DIR/spool` | file de jobs web → worker |
-| `BV_ACCESS_CONF` | `<compose>/access/access.conf` | matrice service × rôle |
-| `BV_COMPOSE_DIR` | dossier parent du projet | racine docker compose |
-| `BV_DASH_PASSWORD` | — | mot de passe applicatif du dashboard |
-| `BV_PORT` | `8000` | port d'écoute du dashboard |
+| `BV_SECRETS_DIR` | `/opt/bv-secrets` | store, renders, encrypted mirror |
+| `BV_SECRETS_CONF` | `<project>/secrets.conf` | declarative source |
+| `BV_SPOOL` | `$BV_SECRETS_DIR/spool` | web → worker job queue |
+| `BV_ACCESS_CONF` | `<compose>/access/access.conf` | service × role matrix |
+| `BV_COMPOSE_DIR` | project's parent directory | docker compose root |
+| `BV_DASH_PASSWORD` | — | dashboard application password |
+| `BV_PORT` | `8000` | dashboard listening port |
 
-Le worker pilote en plus des services dont les noms varient d'une installation à
-l'autre. Laissés vides, les fonctionnalités correspondantes sont désactivées
-plutôt que d'agir sur un service arbitraire :
+The worker also drives services whose names differ between installations. Left
+empty, the matching features are disabled rather than acting on an arbitrary
+service:
 
-| Variable | Rôle |
+| Variable | Role |
 |---|---|
-| `BV_PROXY_SERVICE` | reverse-proxy recréé après un changement d'accès |
-| `BV_ACCESS_RELOAD_SERVICES` | services à redémarrer ensuite, séparés par des virgules |
-| `BV_AUTH_SERVICE` | service portant la console de gestion des comptes |
+| `BV_PROXY_SERVICE` | reverse proxy recreated after an access change |
+| `BV_ACCESS_RELOAD_SERVICES` | services to restart afterwards, comma-separated |
+| `BV_AUTH_SERVICE` | service hosting the account management console |
 
-Sur un système OpenRC, ces valeurs vivent dans `/etc/conf.d/bvsecrets-worker` —
-voir [`deploy/bvsecrets-worker.confd.example`](deploy/bvsecrets-worker.confd.example).
-Le dépôt reste ainsi générique, les noms réels ne sont jamais versionnés.
+On an OpenRC system these live in `/etc/conf.d/bvsecrets-worker` — see
+[`deploy/bvsecrets-worker.confd.example`](deploy/bvsecrets-worker.confd.example).
+That keeps the repository generic; real service names are never versioned.
 
-## Structure
+## Layout
 
 ```
-bvsecrets/          moteur partagé par les trois faces
-  config.py           chemins et vocabulaire du domaine
-  envfile.py          lecture/écriture atomique des .env
-  engine.py           résolution, rendu, rotation, doctor
-  cli.py              interface en ligne de commande
-  worker/             exécuteur privilégié du spool
+bvsecrets/          engine shared by the three faces
+  config.py           paths and domain vocabulary
+  envfile.py          atomic .env read/write
+  locations.py        two-way location connectors
+  conffile.py         appending sections to secrets.conf
+  adopt.py            secret detection in an existing config file
+  engine.py           resolution, render, rotation, doctor
+  cli.py              command-line interface
+  worker/             privileged spool executor
 web/                dashboard
-  server.py           transport HTTP, sessions, CSRF
-  routes.py           points d'entrée de l'API
-  static/css|js/      feuilles par couche, modules ES sans build
-deploy/             unité OpenRC du worker
-docs/               exemple de service compose
+  server.py           HTTP transport, sessions, CSRF
+  routes.py           API entry points
+  static/css|js/      one sheet per layer, ES modules, no build
+deploy/             worker OpenRC unit
+docs/               example compose service
 ```
 
-Aucune dépendance : bibliothèque standard Python côté serveur, modules ES natifs
-côté navigateur, pas d'étape de build.
+No dependencies: Python standard library on the server, native ES modules in the
+browser, no build step.
 
 ## Licence
 
-MIT — voir [LICENSE](LICENSE).
+MIT — see [LICENSE](LICENSE).
