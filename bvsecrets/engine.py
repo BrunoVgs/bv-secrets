@@ -12,6 +12,7 @@ import string
 import subprocess
 from pathlib import Path
 
+from . import locations
 from .config import (ALL_KINDS, COMPOSE_DIR, CONF, DEFAULT_LEN, GEN_KINDS, KEYFILE,
                      LOCAL, MASTER, META, MIRROR, REF, RENDER_DIR)
 from .envfile import parse_env, write_env
@@ -137,6 +138,13 @@ class Engine:
             return self._apply_mysql(arg, value, eff)
         if typ == "cmd":
             return self._apply_cmd(arg, value, eff)
+        if typ in locations.writable_schemes():
+            try:
+                locations.write_location(sink, value)
+                return True
+            except locations.LocationError as e:
+                log(f"    {e}")
+                return False
         log(f"    type de sink inconnu: {sink}")
         return False
 
@@ -371,6 +379,100 @@ class Engine:
                 self._apply_sink(sink, self.value_of(n), eff, False, log)
         self.recreate(names, False, log)
         log("✓ apply terminé.")
+
+    # ---- lecture des localisations : import + dérive ----
+    def read_at(self, sink: str):
+        """Valeur en place à cette localisation, best-effort. None si non lisible.
+
+        Un sink `env:svc#VAR` (raccourci compose) est lu dans rendered/<svc>.env,
+        où render() a matérialisé la valeur. Les sinks purement inscriptibles
+        (mysql, linux, cmd) n'ont pas de lecture bon marché -> None."""
+        scheme = sink.split(":", 1)[0]
+        if scheme == "env":
+            svc, _, var = sink[4:].partition("#")
+            return parse_env(RENDER_DIR / f"{svc}.env").get(var)
+        if scheme in locations.readable_schemes():
+            try:
+                return locations.read_location(sink)
+            except locations.LocationError:
+                return None
+        return None
+
+    def read_current(self, name: str):
+        """Première valeur lisible parmi les localisations d'un secret : (valeur, sink)."""
+        for sink in self.cfg.get(name, {}).get("sinks", []):
+            value = self.read_at(sink)
+            if value not in (None, ""):
+                return value, sink
+        return None, None
+
+    def import_one(self, name: str, source: str = None, force: bool = False, log=print):
+        """Adopte la valeur en place : la lit là où elle vit, l'écrit dans le store.
+
+        Ne touche à rien dehors — c'est l'inverse d'apply. Sans --force, un secret
+        déjà présent au store est laissé tel quel."""
+        if name not in self.cfg:
+            raise ConfigError(f"secret inconnu: {name}")
+        if self.data.get(name) and not force:
+            log(f"· {name}: déjà en store (--force pour réimporter)")
+            return None
+        if source:
+            value = self.read_at(source)
+            sink = source
+        else:
+            value, sink = self.read_current(name)
+        if value in (None, ""):
+            log(f"· {name}: aucune localisation lisible (poser à la main avec `set`)")
+            return None
+        d = parse_env(MASTER)
+        d[name] = value
+        write_env(MASTER, d)
+        self.touch_meta([name])
+        self.data = self._combined()
+        log(f"✓ {name}: importé depuis {sink.split('#')[0]} ({len(value)} c)")
+        return value
+
+    def import_all(self, log=print):
+        adopted = 0
+        for name in sorted(self.cfg):
+            if not self.data.get(name) and self.cfg[name]["kind"] != "computed":
+                if self.import_one(name, log=log) is not None:
+                    adopted += 1
+        log(f"\n{adopted} secret(s) adopté(s).")
+        return adopted
+
+    def status(self, names, log):
+        """Compare la valeur du store à celle en place : synchronisé / dérive / absent."""
+        counts = {"sync": 0, "drift": 0, "extern": 0, "unknown": 0}
+        for n in names:
+            stored = self.value_of(n)
+            found, where = self.read_current(n)
+            if found is None:
+                mark, detail, key = "·", "non lisible", "unknown"
+            elif not stored:
+                mark, detail, key = "+", f"présent dehors, absent du store ({where.split('#')[0]})", "extern"
+            elif found == stored:
+                mark, detail, key = "=", "synchronisé", "sync"
+            else:
+                mark, detail, key = "≠", f"DÉRIVE vs {where.split('#')[0]}", "drift"
+            counts[key] += 1
+            log(f"{mark} {n:34} {detail}")
+        log(f"\n{counts['sync']} synchronisés, {counts['drift']} dérives, "
+            f"{counts['extern']} à importer, {counts['unknown']} non lisibles.")
+        return counts["drift"]
+
+    def scan(self, location: str, log):
+        """Liste les clés d'un fichier pour aider à déclarer les secrets."""
+        target = location if ":" in location else f"envfile:{location}"
+        scheme, path, _ = locations.split(target)
+        if scheme != "envfile":
+            raise ConfigError("scan ne gère pour l'instant que les fichiers env")
+        keys = locations.env_keys(path)
+        declared = {sk.rpartition("#")[2] for c in self.cfg.values() for sk in c["sinks"]}
+        for key in keys:
+            log(f"  {'✓' if key in declared else '+'} {key}")
+        log(f"\n{len(keys)} clé(s) — ✓ déjà gérée, + à déclarer.")
+        return keys
 
     # ---- cohérence ----
     def check(self) -> list:

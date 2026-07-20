@@ -5,7 +5,9 @@ Aucune valeur n'est imprimée en dehors des commandes explicites `get` et `open`
 import argparse
 import subprocess
 import sys
+from pathlib import Path
 
+from . import adopt, conffile
 from .config import (CONF, COMPOSE_DIR, GEN_KINDS, KEYFILE, LOCAL, MASTER, MIRROR,
                      RENDER_DIR, SECRETS_DIR, looks_like_apikey)
 from .engine import ConfigError, Engine, RotateAborted
@@ -92,21 +94,69 @@ def cmd_gen(a, e):
     print(f"généré {a.key} ({kind}) ; lancer `bv-secrets apply` pour propager.")
 
 
+def cmd_import(a, e):
+    """Adopte des valeurs déjà en place : les lit là où elles vivent -> store."""
+    if a.all:
+        e.import_all(_log)
+    elif a.name:
+        e.import_one(a.name, source=a.source, force=a.force, log=_log)
+    else:
+        raise ConfigError("préciser un NOM, ou --all")
+
+
+def cmd_status(a, e):
+    """Compare le store aux valeurs en place et signale les dérives."""
+    names = e.select(a.only) if a.only else sorted(e.cfg)
+    return 1 if e.status(names, _log) else 0
+
+
+def cmd_scan(a, e):
+    """Liste les clés d'un fichier env pour aider à déclarer les secrets."""
+    e.scan(a.path, _log)
+
+
 def cmd_add(a, e):
     """Ajoute une section de secret à secrets.conf en une commande."""
     if not a.sink:
         raise ConfigError("donner au moins un sink "
                           "(env:svc#VAR, file:/p, linux:user, mysql:u@ctr, cmd:...)")
-    block = [f"\n[{a.name}]", f"kind  = {a.kind}", f"group = {a.group}"]
-    if a.length:
-        block.insert(2, f"length = {a.length}")
-    block.append("sinks =")
-    block += [f"    {s}" for s in a.sink]
-    if a.note:
-        block.append(f"note  = {a.note}")
-    with open(CONF, "a", encoding="utf-8") as f:
-        f.write("\n".join(block) + "\n")
+    conffile.append_sections(
+        [conffile.render_section(a.name, a.kind, a.group, a.sink, a.length, a.note)])
     print(f"ajouté [{a.name}] à {CONF.name}. `bv-secrets gen {a.name}` puis `apply`.")
+
+
+def cmd_adopt(a, e):
+    """Onboarde une app : détecte les secrets d'un fichier, déclare + importe."""
+    path = Path(a.file).resolve()
+    if not path.is_file():
+        raise ConfigError(f"fichier introuvable: {path}")
+    proposals, ignored, conflicts = adopt.plan_envfile(path, prefix=a.prefix, known=set(e.cfg))
+    if a.only:
+        wanted = {k.strip() for k in a.only.split(",")}
+        proposals = [p for p in proposals if p.key in wanted]
+
+    print(f"Depuis {path} — {len(proposals)} secret(s) détecté(s) :")
+    for p in proposals:
+        print(f"  + {p.name:34} {p.kind:9} {p.group:7} <- {p.key} ({len(p.value)} c)")
+    if ignored:
+        print(f"  · ignorés (config) : {', '.join(ignored)}")
+    if conflicts:
+        print(f"  ⚠ noms déjà pris (utiliser --prefix) : {', '.join(conflicts)}")
+    if not proposals:
+        print("rien à adopter.")
+        return
+    if not a.yes:
+        print("\nRelancer avec --yes pour déclarer ces secrets et importer leurs valeurs.")
+        return
+
+    blocks = [conffile.render_section(
+        p.name, p.kind, p.group, [adopt.sink_for(path, p.key)],
+        note=f"adopté depuis {path.name}") for p in proposals]
+    conffile.append_sections(blocks)
+    reloaded = Engine()                       # relit avec les nouvelles sections
+    for p in proposals:
+        reloaded.import_one(p.name, source=adopt.sink_for(path, p.key), log=_log)
+    print(f"\n✓ {len(proposals)} secret(s) adopté(s). `bv-secrets status` pour vérifier.")
 
 
 def cmd_doctor(a, e):
@@ -173,6 +223,15 @@ def build_parser():
         (("name",), {}), (("--kind",), {"default": "password"}),
         (("--group",), {"default": "auto"}), (("--length",), {"type": int, "default": 0}),
         (("--sink",), {"action": "append", "default": []}), (("--note",), {"default": ""}))
+    add("import", "adopte des valeurs déjà en place (fichier/config) vers le store", cmd_import,
+        (("name",), {"nargs": "?"}), (("--all",), {"action": "store_true"}),
+        (("--source",), {}), (("--force",), {"action": "store_true"}))
+    add("status", "compare le store aux valeurs en place, signale les dérives", cmd_status, only)
+    add("scan", "liste les clés d'un fichier env pour aider à déclarer", cmd_scan,
+        (("path",), {}))
+    add("adopt", "onboarde une app : détecte les secrets d'un fichier, déclare + importe",
+        cmd_adopt, (("file",), {}), (("--prefix",), {"default": ""}),
+        (("--only",), {}), (("--yes",), {"action": "store_true"}))
     add("doctor", "vérifie que chaque valeur stockée MARCHE (probes réels)", cmd_doctor, only)
     add("seal", "chiffre le store -> store.enc", cmd_seal)
     add("open", "déchiffre store.enc sur stdout", cmd_open)
