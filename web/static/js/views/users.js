@@ -3,12 +3,12 @@
 import { $, bindAll, esc } from "../dom.js";
 import { rel } from "../format.js";
 import { startJob, watchJob } from "../jobs.js";
-import { ROLES } from "../labels.js";
 import { register } from "../render.js";
-import { S } from "../state.js";
+import { ROLES, S } from "../state.js";
 import * as log from "../worklog.js";
 
 const SKELETON_ROWS = 3;
+const SUPERUSER = ROLES[0];   // strongest role: the "last admin" guard keys on it
 
 function skeleton() {
   return Array.from({ length: SKELETON_ROWS }, () =>
@@ -18,7 +18,7 @@ function skeleton() {
 }
 
 function rowHtml(user, index, onlyAdmin) {
-  const locked = user.role === "admin" && onlyAdmin;
+  const locked = user.role === SUPERUSER && onlyAdmin;
   const buttons = ROLES.map((role) =>
     `<button class="filt${user.role === role ? " on" : ""}" data-role-set="${esc(user.username)}"
       data-role="${role}"${user.role === role || locked ? " disabled" : ""} data-busy>${role}</button>`
@@ -43,7 +43,7 @@ function renderUsers() {
     host.innerHTML = '<div class="empty">aucun compte</div>';
     return;
   }
-  const onlyAdmin = S.users.filter((u) => u.role === "admin").length <= 1;
+  const onlyAdmin = S.users.filter((u) => u.role === SUPERUSER).length <= 1;
   host.innerHTML = S.users.map((u, i) => rowHtml(u, i, onlyAdmin)).join("");
 
   bindAll("data-role-set", (username, el) => userOp("role", username, el.dataset.role));

@@ -20,6 +20,8 @@ export const KIND_HELP = {
   computed: "dérivée d'autres secrets, jamais stockée",
 };
 
+// ROLES now comes from the boot payload (state.js), not hardcoded here.
+
 export const VIEW_TITLES = {
   overview: ["Vue d'ensemble", ""],
   coffre: ["Coffre", "Consulter et copier. La rotation se fait dans l'onglet Rotation."],
@@ -29,5 +31,3 @@ export const VIEW_TITLES = {
   audit: ["Audit", "Qui a atteint quoi, quand, d'où, et ce qui a changé."],
   docs: ["Docs", ""],
 };
-
-export const ROLES = ["guest", "trusted", "admin"];

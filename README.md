@@ -35,15 +35,22 @@ they protect. This stays small on purpose. It edits the files where secrets, acc
 rules and accounts already live, and it is the one place that can tell you what
 happened to them.
 
-Three jobs, one shape every time: a file you own is the source of truth, and one
-privileged process makes the running system match it.
+What it centralizes is the boring, critical stuff every box scatters: the secrets,
+and the accounts. Secret values in files, plus the login passwords behind your
+databases and Linux users; and your app's user accounts with what each one can
+reach. One file you own is the source of truth, one privileged process makes the
+running system match it.
 
-| Job | Source of truth | Made real in |
+| What | Source of truth | Reaches |
 |---|---|---|
-| Secrets & rotation | `secrets.conf` | `.env` files, SQL users, Linux accounts, app commands |
-| Access | `access.conf` | Caddy gates, homepage tiles, console tiles |
-| Accounts | the auth service's own DB | roles, deletion, password reset |
+| Secrets & rotation | `secrets.conf` | env & config files, database & Linux login passwords, app commands |
+| Accounts | your app's SQL database | user roles and deletion, from the tool |
+| Access | `access.conf` | your reverse proxy (Caddy, nginx, Apache) |
 | Audit | logs the box already writes | one read-only timeline |
+
+It is not tied to my setup, or to a particular proxy or web framework. Access is
+rendered by a small script you point it at, so the same matrix drives Caddy, nginx
+or Apache; account management calls your app's own commands. Plug in your pieces.
 
 ## Rotation that actually rotates
 
@@ -126,7 +133,7 @@ nothing new and keeps no history of its own.
 
 | Source | From | Tells you |
 |---|---|---|
-| Access | Caddy access log | who reached which service, allowed or denied |
+| Access | your proxy's access log | who reached which service, allowed or denied |
 | Trail | worker spool | rotations, access changes, account edits |
 | Rotation | `meta.env` | when each secret was last set |
 | Host | syslog | SSH logins and `doas` elevations |
@@ -137,29 +144,33 @@ bv-secrets audit --source access --denied    # only refused accesses
 bv-secrets audit --ip 10.8.0.5 --json        # one client, machine-readable
 ```
 
-The worker builds the timeline with privileges it already has: it reads the Caddy
-log (root, `0600`) through `docker exec`, and the host syslog directly because it
-runs as a wheel user. No `doas`, no new privilege, no root log mounted into the web
-container. The dashboard just reads the digest, refreshed every minute.
+The worker builds the timeline with privileges it already has: it reads the proxy's
+access log (root-owned; Caddy in my setup) through `docker exec`, and the host
+syslog directly because it runs as a wheel user. No `doas`, no new privilege, no
+root log mounted into the web container. The dashboard just reads the digest,
+refreshed every minute.
 
 Two honest limits. Accesses are keyed by IP and service, not by portal user (Caddy
 logs the client request; add a `log_append` of `X-Auth-User` if you want names).
 And no secret value ever appears, query strings included.
 
-## Access & accounts
+## Accounts & access
 
-`access.conf` answers one question, "which role reaches which service", and
-everything downstream is generated from it: the Caddy gates, the homepage tiles per
-role, the console tiles. Roles are hierarchical (`guest < trusted < admin`) and
-admin passes every gate. Editing a generated file by hand is always wrong; the next
-render overwrites it. The matrix and its renderer live with the deployment
-(`$BV_COMPOSE_DIR/access/`), not in this repo.
+Your web app keeps its users in a SQL database. bv-secrets manages both the
+accounts and what they can reach, in one place.
 
-Accounts work the same way without duplicating anything: the dashboard changes
-roles and deletes users by running the auth app's own console commands through the
-worker. No second copy of the user schema, no DB credential in the web container,
-passwords never read. The last-admin guard stays in the app, the only place that
-can enforce it right. Leave `BV_AUTH_SERVICE` empty and the feature is simply off.
+**Accounts.** The dashboard sets a user's role and deletes it by calling your app's
+own console commands through the worker, so there is no second copy of the user
+schema and no DB credential in the web container. Passwords are never read, and the
+last-admin guard stays in the app, the only place that can enforce it right. Point
+`BV_AUTH_SERVICE` at your app, or leave it empty to run access-only.
+
+**Access.** `access.conf` maps those roles to services: which role reaches which
+service. The tool renders it into whatever enforces access, so the same matrix
+drives Caddy, nginx or Apache: it calls a small renderer you point it at, then
+reloads the services that consume the output. Roles are hierarchical
+(`guest < trusted < admin`) and admin passes every gate. The renderer ships with
+your deployment, not this repo, since it speaks your proxy's config.
 
 ## Getting started
 
@@ -225,7 +236,8 @@ independent places: the UI, the API and the worker.
 
 ## Configuration
 
-Every path has a default and takes an env override.
+A minimal install sets one thing, `BV_DASH_PASSWORD`. Everything else has a default
+and only exists so nothing is hardcoded to my box.
 
 | Variable | Default | Role |
 |---|---|---|
@@ -239,10 +251,21 @@ Every path has a default and takes an env override.
 | `BV_DASH_PASSWORD` | none | dashboard password |
 | `BV_PORT` | `8000` | dashboard port |
 
-Deployment-specific service names go in `/etc/conf.d/bvsecrets-worker`
-(`BV_PROXY_SERVICE`, `BV_ACCESS_RELOAD_SERVICES`, `BV_AUTH_SERVICE`,
-`BV_CADDY_CONTAINER`). Left empty, the matching feature is off rather than aimed at
-a random service, so the repo stays generic and real names are never versioned. See
+Everything deployment-specific is an env var in `/etc/conf.d/bvsecrets-worker`, so
+the repo carries none of my names or conventions:
+
+- **Proxy & access:** `BV_PROXY_SERVICE`, `BV_ACCESS_RELOAD_SERVICES`,
+  `BV_CADDY_CONTAINER`, and `BV_ACCESS_RENDER` (your renderer, any executable that
+  implements `set <svc> <roles>` and `all`).
+- **Roles:** `BV_ROLES`, default `admin,trusted,guest`, strongest first; the first
+  is the superuser that passes every gate.
+- **Accounts:** `BV_AUTH_SERVICE`, `BV_AUTH_CONSOLE` (default `php bin/console`),
+  and `BV_AUTH_CMD_LIST` / `BV_AUTH_CMD_SETROLE` / `BV_AUTH_CMD_DELETE`. Any app
+  with a CLI that lists, re-roles and deletes users fits.
+- **Audit:** `BV_AUDIT_IGNORE_PATHS`, access-log path prefixes to drop (internal
+  polling, health checks).
+
+Left empty, a feature turns off rather than aiming at a random service. See
 [`deploy/bvsecrets-worker.confd.example`](deploy/bvsecrets-worker.confd.example).
 
 ## Layout

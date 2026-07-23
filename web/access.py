@@ -5,7 +5,7 @@ reverse proxy and restarts the services that consume the matrix.
 """
 import configparser
 
-from bvsecrets.config import ACCESS_CONF, ROLES
+from bvsecrets.config import ACCESS_CONF, ROLES, SUPERUSER
 
 from .html import esc
 
@@ -53,8 +53,8 @@ def rows_html():
         cells = []
         for role in ROLES:
             checked = "checked" if role in svc["roles"] else ""
-            # admin is superuser: always checked, never uncheckable
-            disabled = "disabled" if role == "admin" else ""
+            # superuser: always checked, never uncheckable
+            disabled = "disabled" if role == SUPERUSER else ""
             cells.append(f'<td class="chk"><input type="checkbox" data-role="{role}" '
                          f'{checked} {disabled}></td>')
         orig = ",".join(sorted(svc["roles"]))
@@ -71,6 +71,6 @@ def validate_changes(changes):
         svc, roles = ch.get("service"), ch.get("roles")
         if svc not in known or not isinstance(roles, list) or any(r not in ROLES for r in roles):
             return f"changement invalide: {ch}"
-        if "admin" not in roles:
-            return "admin requis (superutilisateur)"
+        if SUPERUSER not in roles:
+            return f"{SUPERUSER} requis (superutilisateur)"
     return None

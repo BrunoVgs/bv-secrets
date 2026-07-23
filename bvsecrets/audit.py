@@ -14,8 +14,8 @@ import subprocess
 import time
 from pathlib import Path
 
-from .config import (ACCESS_CONF, AUDIT_DIR, CADDY_CONTAINER, CADDY_LOG_DIR,
-                     HOST_SYSLOG, SPOOL, WORKER_DIGEST)
+from .config import (ACCESS_CONF, AUDIT_DIR, AUDIT_IGNORE_PREFIXES, CADDY_CONTAINER,
+                     CADDY_LOG_DIR, HOST_SYSLOG, SPOOL, WORKER_DIGEST)
 from .engine import Engine
 
 CACHE_LIMIT = 500
@@ -92,16 +92,6 @@ def _caddy_files(cutoff: float):
     return files
 
 
-def _meta_domain() -> str:
-    cp = configparser.ConfigParser()
-    cp.optionxform = str
-    try:
-        cp.read(ACCESS_CONF, encoding="utf-8")
-    except OSError:
-        return ""
-    return cp.get("meta", "domain", fallback="")
-
-
 _ASSET_EXT = {"css", "js", "png", "svg", "ico", "jpg", "jpeg", "gif", "webp",
               "woff", "woff2", "ttf", "map"}
 
@@ -119,9 +109,8 @@ def _client_ip(req: dict) -> str:
 
 
 def caddy_events(since: float = 0.0):
-    """HTTP accesses in plain words. Drops static assets and the homepage
-    widget's internal polling to keep only human-recognizable accesses."""
-    domain = _meta_domain()
+    """HTTP accesses in plain words. Drops static assets and any path prefix in
+    BV_AUDIT_IGNORE_PATHS (internal polling, health checks)."""
     roles = _service_roles()
     out = []
     for path in _caddy_files(since):
@@ -138,13 +127,9 @@ def caddy_events(since: float = 0.0):
             req = o.get("request", {})
             host = req.get("host", "")
             uri = (req.get("uri", "") or "").split("?", 1)[0]
-            if _is_asset(uri):
+            if _is_asset(uri) or (AUDIT_IGNORE_PREFIXES and uri.startswith(AUDIT_IGNORE_PREFIXES)):
                 continue
-            bare = host == domain
-            if bare and uri.startswith("/api/"):        # homepage internal polling
-                continue
-            service = "portail" if uri.startswith("/auth") else "accueil" if bare \
-                else host.split(".", 1)[0]
+            service = host.split(".", 1)[0] or host      # subdomain, or host if none
             status = int(o.get("status") or 0)
             loc = o.get("resp_headers", {}).get("Location") or []
             user = (req.get("headers", {}).get("X-Auth-User") or [""])[0]
@@ -154,7 +139,7 @@ def caddy_events(since: float = 0.0):
                 outcome, detail = "deny", f"refusé sur {service} (rôle insuffisant)"
             elif status == 401:
                 outcome, detail = "deny", f"connexion requise — {service}"
-            elif status in (302, 303) and any("/auth/login" in x for x in loc):
+            elif status in (302, 303) and any("login" in x.lower() for x in loc):
                 outcome, detail = "login", f"invité à se connecter — {service}"
             elif 500 <= status < 600:
                 outcome, detail = "info", f"erreur serveur — {service}"

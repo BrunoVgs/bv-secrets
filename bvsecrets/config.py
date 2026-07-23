@@ -31,7 +31,9 @@ CONF = _path("BV_SECRETS_CONF", PROJECT_DIR / "secrets.conf")
 COMPOSE_DIR = _path("BV_COMPOSE_DIR", PROJECT_DIR.parent)
 COMPOSE_FILE = COMPOSE_DIR / "docker-compose.yaml"
 ACCESS_CONF = _path("BV_ACCESS_CONF", COMPOSE_DIR / "access" / "access.conf")
-ACCESS_RENDER = COMPOSE_DIR / "access" / "render-access.py"
+# Renderer that turns the matrix into whatever enforces access (Caddy, nginx,
+# Apache...). Any executable implementing `set <svc> <roles>` and `all`.
+ACCESS_RENDER = _path("BV_ACCESS_RENDER", COMPOSE_DIR / "access" / "render-access.py")
 
 # Audit sources read by the worker with privileges it already has: Caddy log
 # (root:0600) via `docker exec`, host syslog (root:wheel) directly as bv.
@@ -53,7 +55,9 @@ GROUPS = {"auto", "app", "careful", "manual"}
 DEFAULT_LEN = {"password": 20, "hex": 32, "b64": 32, "userpass": 24, "passphrase": 24}
 
 SINK_TYPES = ("env", "file", "linux", "mysql", "cmd")
-ROLES = ["admin", "trusted", "guest"]     # strongest to weakest
+# Roles strongest to weakest; the first one is the superuser (passes every gate).
+ROLES = [r.strip() for r in os.environ.get("BV_ROLES", "admin,trusted,guest").split(",") if r.strip()]
+SUPERUSER = ROLES[0]
 ROTATE_GROUPS = {"auto", "app", "careful"}
 
 
@@ -65,7 +69,17 @@ def _csv(env: str) -> list:
 # rather than acting on an arbitrary service. Set via /etc/conf.d/bvsecrets-worker.
 PROXY_SERVICE = os.environ.get("BV_PROXY_SERVICE", "")
 ACCESS_RELOAD_SERVICES = _csv("BV_ACCESS_RELOAD_SERVICES")
+
+# Account management runs the app's own CLI in its container. Console prefix and
+# subcommands are configurable so any framework works, not just Symfony.
 AUTH_SERVICE = os.environ.get("BV_AUTH_SERVICE", "")
+AUTH_CONSOLE = os.environ.get("BV_AUTH_CONSOLE", "php bin/console")
+AUTH_CMD_LIST = os.environ.get("BV_AUTH_CMD_LIST", "app:users")
+AUTH_CMD_SETROLE = os.environ.get("BV_AUTH_CMD_SETROLE", "app:set-role")
+AUTH_CMD_DELETE = os.environ.get("BV_AUTH_CMD_DELETE", "app:delete-user")
+
+# Access-log path prefixes to drop from the audit (internal polling, health checks).
+AUDIT_IGNORE_PREFIXES = tuple(_csv("BV_AUDIT_IGNORE_PATHS"))
 
 REF = re.compile(r"\{([A-Za-z0-9_]+)\}")
 # A name containing API or TOKEN marks a third-party key -> kind=apikey enforced.

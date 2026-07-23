@@ -1,10 +1,10 @@
 """Build the served pages: login and dashboard."""
 import json
 
-from bvsecrets.config import ALL_KINDS, GEN_KINDS
+from bvsecrets.config import ALL_KINDS, GEN_KINDS, ROLES
 
 from . import access, inventory
-from .html import page
+from .html import esc, page
 
 NAV_ITEMS = [
     ("overview", "Vue d'ensemble", None),
@@ -45,7 +45,11 @@ def dashboard(csrf: str) -> str:
         "auto": auto,
         "kinds": {"all": sorted(ALL_KINDS - {"manual"}), "gen": sorted(GEN_KINDS)},
         "groups": ["auto", "app", "careful", "manual"],
+        "roles": ROLES,
     }).replace("<", "\\u003c")
     counts = {"secrets": len(rows), "auto": len(auto), "services": len(services)}
+    head = ("<tr><th>service</th>"
+            + "".join(f"<th>{esc(r)}</th>" for r in ROLES)
+            + "<th>surfaces</th></tr>")
     return page("index.html", NAV=_nav(counts), AUTOCOUNT=str(len(auto)),
-                ACCESS=access.rows_html(), BOOT=boot)
+                ACCESS=access.rows_html(), ACCESSHEAD=head, BOOT=boot)

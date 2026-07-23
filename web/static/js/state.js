@@ -4,6 +4,7 @@ const BOOT = JSON.parse(document.getElementById("bv-boot").textContent);
 export const CSRF = BOOT.csrf;
 export const KINDS = BOOT.kinds;
 export const GROUPS = BOOT.groups;
+export const ROLES = BOOT.roles;
 
 export const S = {
   secrets: BOOT.secrets,

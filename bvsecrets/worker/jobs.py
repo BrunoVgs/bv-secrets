@@ -4,15 +4,23 @@ Each handler takes (job, log) and returns a JSON payload or None. Logs surface
 verbatim in the dashboard console, so they must contain no secret value.
 """
 import json
+import os
 import subprocess
 
-from ..config import (ACCESS_RELOAD_SERVICES, ACCESS_RENDER, ALL_KINDS, AUTH_SERVICE,
-                      COMPOSE_FILE, GEN_KINDS, GROUPS, PROXY_SERVICE, ROLES,
-                      looks_like_apikey)
+from ..config import (ACCESS_RELOAD_SERVICES, ACCESS_RENDER, ALL_KINDS,
+                      AUTH_CMD_DELETE, AUTH_CMD_LIST, AUTH_CMD_SETROLE, AUTH_CONSOLE,
+                      AUTH_SERVICE, COMPOSE_FILE, GEN_KINDS, GROUPS, PROXY_SERVICE,
+                      ROLES, looks_like_apikey)
 from ..engine import Engine
 from .confedit import read_conf_lines, rewrite_section, write_conf_lines
 
 ROLES_OK = set(ROLES)
+
+
+def _render(*args):
+    """Invoke the access renderer: directly if executable, else via python3."""
+    r = str(ACCESS_RENDER)
+    return [r, *args] if os.access(r, os.X_OK) else ["python3", r, *args]
 
 
 def run(cmd, log, timeout=180):
@@ -39,8 +47,8 @@ def do_access(job, log):
         roles = ch.get("roles") or []
         if not svc or not isinstance(roles, list) or any(r not in ROLES_OK for r in roles):
             raise RuntimeError(f"changement invalide: {ch!r}")
-        run(["python3", str(ACCESS_RENDER), "set", svc, ",".join(roles)], log)
-    run(["python3", str(ACCESS_RENDER), "all"], log)
+        run(_render("set", svc, ",".join(roles)), log)
+    run(_render("all"), log)
     if PROXY_SERVICE:
         run(["docker", "compose", "-f", str(COMPOSE_FILE),
              "up", "-d", "--force-recreate", "--no-deps", PROXY_SERVICE], log)
@@ -95,8 +103,8 @@ def _console(args, log, timeout=120):
         raise RuntimeError("gestion des comptes indisponible : BV_AUTH_SERVICE non "
                            "configuré (voir deploy/bvsecrets-worker.confd.example)")
     cmd = ["docker", "compose", "-f", str(COMPOSE_FILE), "exec", "-T", AUTH_SERVICE,
-           "php", "bin/console"] + args
-    log(f"$ php bin/console {' '.join(args)}")
+           *AUTH_CONSOLE.split()] + args
+    log(f"$ {AUTH_CONSOLE} {' '.join(args)}")
     p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     for line in (p.stdout + p.stderr).splitlines():
         if line.strip():
@@ -112,14 +120,14 @@ def _silent(*_):
 
 def do_users(job, log):
     """List portal accounts; no password is read."""
-    out = _console(["app:users"], _silent)
+    out = _console([AUTH_CMD_LIST], _silent)
     for ln in out.splitlines():
         ln = ln.strip()
         if ln.startswith("["):
             users = json.loads(ln)
             log(f"{len(users)} compte(s)")
             return users
-    raise RuntimeError("sortie app:users illisible")
+    raise RuntimeError(f"sortie {AUTH_CMD_LIST} illisible")
 
 
 def do_user(job, log):
@@ -132,9 +140,9 @@ def do_user(job, log):
         role = str(job.get("role", ""))
         if role not in ROLES_OK:
             raise RuntimeError(f"rôle invalide: {role}")
-        _console(["app:set-role", name, role], log)
+        _console([AUTH_CMD_SETROLE, name, role], log)
     elif op == "delete":
-        _console(["app:delete-user", name], log)
+        _console([AUTH_CMD_DELETE, name], log)
     else:
         raise RuntimeError(f"opération inconnue: {op}")
     return do_users(job, _silent)
