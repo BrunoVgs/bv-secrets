@@ -1,10 +1,10 @@
-# La config réelle décrit l'infrastructure : services, utilisateurs SQL, chemins,
-# commandes de probe. Aucune valeur de secret, mais une carte complète du parc.
-# Seul secrets.conf.example est versionné.
+# The real config describes the infrastructure: services, SQL users, paths, probe
+# commands. No secret value, but a full map of the estate. Only
+# secrets.conf.example is versioned.
 secrets.conf
 
-# Le store, les rendus et le miroir chiffré vivent hors du projet ($BV_SECRETS_DIR)
-# et ne doivent jamais y entrer.
+# The store, renders and encrypted mirror live outside the project ($BV_SECRETS_DIR)
+# and must never enter it.
 *.env
 *.env.local
 store.enc
@@ -18,5 +18,5 @@ __pycache__/
 *.bak
 *.bak.*
 
-# Configuration site du worker : noms de services réels du déploiement.
+# Worker site config: real deployment service names.
 deploy/bvsecrets-worker.confd

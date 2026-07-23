@@ -1,15 +1,15 @@
-"""Points d'entrée de l'API.
+"""API entry points.
 
-Chaque handler reçoit la requête décodée et renvoie (code, objet JSON). La
-mécanique HTTP (cookies, sessions, CSRF, sérialisation) vit dans server.py :
-ces fonctions restent testables sans socket.
+Each handler takes the decoded request and returns (code, JSON object). The HTTP
+plumbing (cookies, sessions, CSRF, serialization) lives in server.py, so these stay
+testable without a socket.
 """
 import re
 
 from bvsecrets import Engine, looks_like_apikey
 from bvsecrets.config import ALL_KINDS, GEN_KINDS, GROUPS, ROLES
 
-from . import access, inventory, session, spool
+from . import access, audit_read, inventory, session, spool
 
 JOB_ID_RE = re.compile(r"^[0-9a-f]{8,32}$")
 
@@ -29,6 +29,10 @@ def api_plan(req):
 
 def api_job(req):
     return 200, spool.job_result(req.path.rsplit("/", 1)[1], JOB_ID_RE)
+
+
+def api_audit(req):
+    return 200, audit_read.digest()
 
 
 # ---- POST ----
@@ -93,7 +97,7 @@ def api_meta_apply(req):
 
 
 def api_reveal(req):
-    # Ré-authentification exigée à CHAQUE reveal : une session valide ne suffit pas.
+    # Re-auth required on EVERY reveal: a valid session isn't enough.
     if not session.check_password(str(req.body.get("password", ""))):
         return _err(401, "bad password")
     name = str(req.body.get("name", ""))
@@ -103,7 +107,7 @@ def api_reveal(req):
     return 200, {"name": name, "value": value}
 
 
-GET_ROUTES = {"/api/list": api_list, "/api/plan": api_plan}
+GET_ROUTES = {"/api/list": api_list, "/api/plan": api_plan, "/api/audit": api_audit}
 POST_ROUTES = {
     "/api/rotate": api_rotate,
     "/api/doctor": api_doctor,
@@ -113,6 +117,6 @@ POST_ROUTES = {
     "/api/meta/apply": api_meta_apply,
     "/api/reveal": api_reveal,
 }
-# Reveal renvoie une valeur : la temporisation anti-bruteforce est appliquée par
-# le serveur sur les réponses 401 de ces routes.
+# Reveal returns a value: the server applies the anti-bruteforce delay on 401
+# responses of these routes.
 RATE_LIMITED = {"/api/reveal", "/api/login"}

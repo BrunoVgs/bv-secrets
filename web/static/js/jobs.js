@@ -1,7 +1,7 @@
-/* Cycle de vie d'un job : dépôt, suivi du log en direct, resynchronisation.
+/* Job lifecycle: submit, live log tailing, resync.
 
-   Les cinq actions (rotate, doctor, comptes, format, accès) partagent cette
-   logique de streaming et de timeout — un correctif ici porte partout. */
+   The five actions (rotate, doctor, accounts, format, access) share this streaming
+   and timeout logic — a fix here applies everywhere. */
 import { fetchJob, postJob, refreshList } from "./api.js";
 import { render } from "./render.js";
 import { S } from "./state.js";
@@ -11,8 +11,8 @@ const POLL_MS = 1000;
 const MAX_TICKS = 300;                  // 5 minutes
 const PENDING = new Set(["queued", "pending", "running"]);
 
-/* Résout avec le résultat final. onLine reçoit chaque nouvelle ligne : le worker
-   réécrit son résultat pendant l'exécution, seul le delta est émis. */
+/* Resolves with the final result. onLine gets each new line: the worker rewrites
+   its result during execution, only the delta is emitted. */
 export function watchJob(id, onLine) {
   return new Promise((resolve) => {
     let ticks = 0;
@@ -60,8 +60,8 @@ export async function finishJob(id, { onLine, onDone } = {}) {
   return result;
 }
 
-/* Dépose un job et branche la console. Renvoie null si le dépôt est refusé.
-   `silent` sert aux chargements de fond, qui ne doivent pas ouvrir la console. */
+/* Submit a job and wire the console. Returns null if the submit is refused.
+   `silent` is for background loads, which must not open the console. */
 export async function startJob(url, payload, { title, header, silent } = {}) {
   if (S.busy) return null;
   log.setBusy(true);

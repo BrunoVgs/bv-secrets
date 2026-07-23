@@ -1,13 +1,12 @@
-"""Interface en ligne de commande — enveloppe mince autour d'Engine.
-
-Aucune valeur n'est imprimée en dehors des commandes explicites `get` et `open`.
-"""
+"""CLI: thin wrapper around Engine. No value is printed outside `get` and `open`."""
 import argparse
+import datetime
+import json
 import subprocess
 import sys
 from pathlib import Path
 
-from . import adopt, conffile
+from . import adopt, audit, conffile
 from .config import (CONF, COMPOSE_DIR, GEN_KINDS, KEYFILE, LOCAL, MASTER, MIRROR,
                      RENDER_DIR, SECRETS_DIR, looks_like_apikey)
 from .engine import ConfigError, Engine, RotateAborted
@@ -95,7 +94,7 @@ def cmd_gen(a, e):
 
 
 def cmd_import(a, e):
-    """Adopte des valeurs déjà en place : les lit là où elles vivent -> store."""
+    """Adopt in-place values: read them where they live -> store."""
     if a.all:
         e.import_all(_log)
     elif a.name:
@@ -105,18 +104,18 @@ def cmd_import(a, e):
 
 
 def cmd_status(a, e):
-    """Compare le store aux valeurs en place et signale les dérives."""
+    """Compare the store to in-place values and report drift."""
     names = e.select(a.only) if a.only else sorted(e.cfg)
     return 1 if e.status(names, _log) else 0
 
 
 def cmd_scan(a, e):
-    """Liste les clés d'un fichier env pour aider à déclarer les secrets."""
+    """List a .env file's keys to help declare secrets."""
     e.scan(a.path, _log)
 
 
 def cmd_add(a, e):
-    """Ajoute une section de secret à secrets.conf en une commande."""
+    """Add a secret section to secrets.conf in one command."""
     if not a.sink:
         raise ConfigError("donner au moins un sink "
                           "(env:svc#VAR, file:/p, linux:user, mysql:u@ctr, cmd:...)")
@@ -126,7 +125,7 @@ def cmd_add(a, e):
 
 
 def cmd_adopt(a, e):
-    """Onboarde une app : détecte les secrets d'un fichier, déclare + importe."""
+    """Onboard an app: detect a file's secrets, declare + import."""
     path = Path(a.file).resolve()
     if not path.is_file():
         raise ConfigError(f"fichier introuvable: {path}")
@@ -153,7 +152,7 @@ def cmd_adopt(a, e):
         p.name, p.kind, p.group, [adopt.sink_for(path, p.key)],
         note=f"adopté depuis {path.name}") for p in proposals]
     conffile.append_sections(blocks)
-    reloaded = Engine()                       # relit avec les nouvelles sections
+    reloaded = Engine()                       # reload with the new sections
     for p in proposals:
         reloaded.import_one(p.name, source=adopt.sink_for(path, p.key), log=_log)
     print(f"\n✓ {len(proposals)} secret(s) adopté(s). `bv-secrets status` pour vérifier.")
@@ -176,8 +175,8 @@ def cmd_open(a, e):
     sys.stdout.write(r.stdout.decode())
 
 
-def cmd_audit(a, e):
-    """Cherche les valeurs gérées présentes en clair ailleurs dans le repo."""
+def cmd_leaks(a, e):
+    """Scan the repo for managed values sitting in cleartext elsewhere."""
     values = {k: v for k, v in e.data.items() if len(v) >= 6}
     hits = []
     for path in COMPOSE_DIR.rglob("*"):
@@ -189,6 +188,28 @@ def cmd_audit(a, e):
             continue
         hits += [f"LEAK  {path}  contient la valeur de {k}" for k, v in values.items() if v in text]
     return _report(hits, "\nClean — aucune valeur gérée trouvée en clair ailleurs.")
+
+
+_MARK = {"allow": "✓", "deny": "✗", "change": "~", "login": "→", "check": "?", "info": "·"}
+
+
+def cmd_audit(a, e):
+    """Unified timeline: who reached what, when, from where, and what changed.
+    Reads existing logs with privileges the account already has (docker + wheel)."""
+    sources = audit.ALL_SOURCES if a.source == "all" else (a.source,)
+    since = audit.parse_since(a.since)
+    events = audit.collect(sources, since)
+    rows = audit.timeline(events, service=a.service, ip=a.ip, user=a.user,
+                          denied=a.denied, limit=a.limit)
+    if a.json:
+        print(json.dumps(rows, ensure_ascii=False))
+        return 0
+    for ev in rows:
+        when = datetime.datetime.fromtimestamp(ev["ts"]).strftime("%d/%m %H:%M")
+        mark = _MARK.get(ev["outcome"], "·")
+        print(f"{when}  {mark} {ev['source']:7} {ev['actor']:22.22} {ev['target']:16.16} {ev['detail']}")
+    print(f"\n{len(rows)} événement(s).")
+    return 0
 
 
 def build_parser():
@@ -235,7 +256,14 @@ def build_parser():
     add("doctor", "vérifie que chaque valeur stockée MARCHE (probes réels)", cmd_doctor, only)
     add("seal", "chiffre le store -> store.enc", cmd_seal)
     add("open", "déchiffre store.enc sur stdout", cmd_open)
-    add("audit", "cherche des valeurs en clair dans le repo", cmd_audit)
+    add("audit", "timeline des accès : qui a atteint quoi, quand, d'où, ce qui a changé",
+        cmd_audit,
+        (("--source",), {"choices": ["all", "access", "trail", "host", "rotdate"], "default": "all"}),
+        (("--service",), {"default": ""}), (("--ip",), {"default": ""}),
+        (("--user",), {"default": ""}), (("--since",), {"default": "7d"}),
+        (("--denied",), {"action": "store_true"}), (("--limit",), {"type": int, "default": 200}),
+        (("--json",), {"action": "store_true"}))
+    add("leaks", "cherche des valeurs gérées présentes en clair dans le repo", cmd_leaks)
     return ap
 
 

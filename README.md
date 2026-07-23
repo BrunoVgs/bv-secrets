@@ -5,9 +5,9 @@
 <h1 align="center">bv-secrets</h1>
 
 <p align="center">
-  Control plane for a self-hosted server, no dependencies.<br>
-  Secrets and their rotation, who can reach which service, and the portal accounts —
-  one declarative source, one privileged worker.
+  A low-level manager that edits the files directly: secrets, permissions, accounts.<br>
+  One declarative source, one privileged worker, and an audit lens to see who reached
+  what, when, from where, and what changed.
 </p>
 
 <p align="center">
@@ -20,16 +20,18 @@
 
 ## What it is
 
-It started as a secret manager and grew into the control plane for the whole
-box. Three things are administered here, and they turned out to be the same
-problem: a declarative source of truth, and something privileged that makes
-reality match it.
+A low-level manager for a self-hosted box. It does not run a daemon that owns
+your infrastructure; it edits the actual files where secrets, permissions and
+accounts already live. Three things are administered here, and they turned out to
+be the same problem: a declarative source of truth, and something privileged that
+makes reality match it — plus one lens to observe all of it.
 
 | Domain | Source of truth | Applied to |
 |---|---|---|
 | Secrets and rotation | `secrets.conf` | `.env` files, SQL users, Linux accounts, app commands |
 | Access | `access.conf` | Caddy gates, homepage tiles per role, console tiles |
 | Portal accounts | the auth service's database | roles, deletion, password reset |
+| Audit | logs that already exist | a read-only timeline — who reached what, when, what changed |
 
 The part that matters is that the loop is closed. A personal vault (Bitwarden,
 Dashlane) stores passwords for a human to read back. Here, when a database
@@ -42,6 +44,10 @@ The same reasoning pushed accounts in. Running a second web backoffice next to
 this one, with its own session handling and its own database access, only added
 attack surface for something the worker could already do through the app's own
 console commands. So the backoffice went away and the accounts moved here.
+
+Audit is the observing counterpart of all this: once the tool touches secrets,
+access and accounts, it is also the right place to *look* — but as a lens over
+logs that already exist, never a new collection or retention system.
 
 ## Onboarding an app
 
@@ -126,7 +132,10 @@ privilege: compromising the web container gives neither docker, nor write access
 the store, nor the database.
 
 Values are never logged. The only commands that print one are `get` and `open`,
-and only when asked.
+and only when asked. `audit` fits the same asymmetry: it only ever prints
+metadata, and the two root-owned log sources (Caddy, syslog) are read
+interactively through `doas` from the CLI, never granted to the worker or the
+dashboard as a standing privilege.
 
 ## Two orthogonal axes
 
@@ -219,6 +228,46 @@ enforce it correctly.
 Left empty, `BV_AUTH_SERVICE` disables the feature rather than pointing at some
 arbitrary service.
 
+## Audit
+
+`audit` is a read-only lens, not a monitoring product. It reads logs the box
+already writes, normalises them into one timeline, and answers a single question:
+who reached what, when, from where, and what changed. It collects nothing new and
+keeps no history of its own.
+
+| Source | Where | Yields |
+|---|---|---|
+| Access | Caddy JSON access log | HTTP requests: IP, service, allowed / denied (403) |
+| Trail | worker spool (`done/`, `results/`) | privileged actions: rotate, access change, account edit |
+| Rotation dates | `meta.env` | when each secret was last set |
+| Host | syslog (`sshd`, `doas`) | SSH logins and privilege elevations |
+
+```sh
+bv-secrets audit --since 24h            # everything, last 24h
+bv-secrets audit --source access --denied   # only refused HTTP accesses (403)
+bv-secrets audit --source trail --since 7d   # recent rotations, grants, account edits
+bv-secrets audit --ip 10.8.0.5 --json        # one client, machine-readable
+```
+
+**No standing privilege.** The Caddy log is `root:0600` and the syslog is
+root-owned; reading them is an interactive, `doas`-elevated act reserved to the
+CLI on the host — exactly like a `linux:` sink. Nothing gains a `nopass` rule and
+no root log is mounted into a container to make a dashboard "live".
+
+That boundary shapes where each thing shows up. The worker builds a digest of the
+parts it can read unprivileged (trail + rotation dates) into `$BV_SECRETS_DIR/audit/`,
+which the read-only dashboard renders continuously. The access and host slices are
+written to the same directory by the last CLI `audit` run and shown with an
+`as of` marker, so the dashboard is honest about their freshness rather than
+pretending to a liveness it cannot have safely. No value ever appears in either
+face; URLs are logged without their query string.
+
+Account *changes* surface through the trail (`source: trail`); the current account
+roster stays in the **Accounts** view. One deliberate limitation: Caddy logs the
+client request, so accesses are attributed by IP and service, not by portal user —
+attaching the authenticated user needs an explicit `log_append` of `X-Auth-User`
+in the Caddy `(logging)` snippet, not an implicit promise.
+
 ## Commands
 
 | Command | Effect |
@@ -237,7 +286,8 @@ arbitrary service.
 | `get` / `set` / `gen` | read, write, generate a value |
 | `add` | register a new secret and its targets |
 | `seal` / `open` | encrypted mirror of the store, for off-machine backup |
-| `audit` | look for managed values sitting in cleartext elsewhere |
+| `audit [--source --since --denied --ip --service --json]` | timeline: who reached what, when, from where, what changed |
+| `leaks` | look for managed values sitting in cleartext elsewhere |
 | `verify-render` | check that `render()` reproduces the current renders |
 
 ## What rotation actually does
@@ -265,6 +315,8 @@ Every path has a default and can be overridden through the environment:
 | `BV_SPOOL` | `$BV_SECRETS_DIR/spool` | web → worker job queue |
 | `BV_ACCESS_CONF` | `<compose>/access/access.conf` | service × role matrix |
 | `BV_COMPOSE_DIR` | project's parent directory | docker compose root |
+| `BV_CADDY_LOG_DIR` | `/var/log/caddy` | Caddy access logs read by `audit` |
+| `BV_HOST_SYSLOG` | `/var/log/messages` | host syslog (ssh/doas) read by `audit` |
 | `BV_DASH_PASSWORD` | — | dashboard application password |
 | `BV_PORT` | `8000` | dashboard listening port |
 
@@ -292,11 +344,13 @@ bvsecrets/          engine shared by the three faces
   conffile.py         appending sections to secrets.conf
   adopt.py            secret detection in an existing config file
   engine.py           resolution, render, rotation, doctor
+  audit.py            audit lens: normalised events from existing logs
   cli.py              command-line interface
-  worker/             privileged spool executor
+  worker/             privileged spool executor (also builds the audit digest)
 web/                dashboard
   server.py           HTTP transport, sessions, CSRF
   routes.py           API entry points
+  audit_read.py       read-only merge of the audit digests
   static/css|js/      one sheet per layer, ES modules, no build
 deploy/             worker OpenRC unit
 docs/               example compose service

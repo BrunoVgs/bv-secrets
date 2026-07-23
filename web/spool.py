@@ -1,8 +1,8 @@
-"""Dépôt de jobs dans le spool.
+"""Drop jobs into the spool.
 
-Le dashboard ne fait qu'écrire un descripteur de job ; le worker privilégié
-l'exécute et réécrit un résultat sans valeur. L'écriture passe par un fichier
-temporaire renommé pour que le worker ne lise jamais un job partiel.
+The dashboard only writes a job descriptor; the privileged worker runs it and
+writes back a value-free result. Writes go through a renamed temp file so the
+worker never reads a partial job.
 """
 import json
 import os

@@ -1,7 +1,7 @@
-"""Matrice service × rôle, lue depuis access/access.conf (monté read-only).
+"""Service x role matrix, read from access/access.conf (mounted read-only).
 
-L'écriture passe par un job `access` : le worker relance le rendu, puis recrée le
-reverse-proxy et redémarre les services qui consomment la matrice.
+Writes go through an `access` job: the worker re-renders, then recreates the
+reverse proxy and restarts the services that consume the matrix.
 """
 import configparser
 
@@ -53,7 +53,7 @@ def rows_html():
         cells = []
         for role in ROLES:
             checked = "checked" if role in svc["roles"] else ""
-            # admin est superutilisateur : toujours coché, jamais décochable
+            # admin is superuser: always checked, never uncheckable
             disabled = "disabled" if role == "admin" else ""
             cells.append(f'<td class="chk"><input type="checkbox" data-role="{role}" '
                          f'{checked} {disabled}></td>')
@@ -65,7 +65,7 @@ def rows_html():
 
 
 def validate_changes(changes):
-    """-> message d'erreur, ou None si la liste de changements est acceptable."""
+    """-> error message, or None if the change list is acceptable."""
     known = {s["id"] for s in matrix()["services"]}
     for ch in changes:
         svc, roles = ch.get("service"), ch.get("roles")

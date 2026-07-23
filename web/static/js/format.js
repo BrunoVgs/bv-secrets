@@ -1,4 +1,4 @@
-/* Mise en forme des valeurs affichées. */
+/* Formatting of displayed values. */
 import { S } from "./state.js";
 
 /* "2026-07-14 09:12" -> "il y a 4 j" */
@@ -19,8 +19,7 @@ export function rel(ts) {
   return `il y a ${a} an${a > 1 ? "s" : ""}`;
 }
 
-/* Couleur de la pastille d'état : résultat du dernier doctor s'il existe,
-   sinon simple présence de la valeur en store. */
+/* Status dot color: last doctor result if any, else just value presence. */
 export function dotColor(secret) {
   const probe = S.doctor[secret.name];
   if (probe) return probe.ok ? "#3fbf5f" : "#d63a42";

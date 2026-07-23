@@ -1,8 +1,8 @@
-"""Moteur bv-secrets : résolution, rendu, rotation et application des secrets.
+"""bv-secrets engine: resolution, render, rotation, apply.
 
-Un seul cerveau pour trois faces : le CLI, le worker et l'UI web importent cette
-classe et appellent les mêmes méthodes. Aucune valeur n'est jamais journalisée —
-les callbacks `log` reçoivent des noms de secrets et des cibles, jamais un secret.
+One brain for three faces: CLI, worker and web import this class and call the same
+methods. No value is ever logged; `log` callbacks get names and targets, never a
+secret.
 """
 import base64
 import configparser
@@ -19,13 +19,13 @@ from .envfile import parse_env, write_env
 
 
 class ConfigError(RuntimeError):
-    """Config absente ou incohérente — remonte à l'appelant plutôt que sys.exit,
-    pour que le worker puisse la transformer en résultat de job."""
+    """Missing or inconsistent config; raised to the caller instead of sys.exit so
+    the worker can turn it into a job result."""
 
 
 class RotateAborted(RuntimeError):
-    """Un sink a échoué ; les sinks déjà appliqués ont été remis à leur valeur
-    précédente et le store n'a pas été modifié."""
+    """A sink failed; already-applied sinks were rolled back and the store is
+    untouched."""
 
 
 class Engine:
@@ -33,7 +33,7 @@ class Engine:
         self.cfg = self._load_conf()
         self.data = self._combined()
 
-    # ---- config + valeurs ----
+    # ---- config + values ----
     @staticmethod
     def _load_conf() -> dict:
         cp = configparser.ConfigParser(interpolation=None)
@@ -65,7 +65,7 @@ class Engine:
         return data
 
     def value_of(self, name: str, data: dict = None) -> str:
-        """Valeur effective d'un secret ; les `computed` dérivent des autres."""
+        """Effective value of a secret; `computed` ones derive from others."""
         data = self.data if data is None else data
         c = self.cfg.get(name)
         if c and c["kind"] == "computed" and c["compute"]:
@@ -76,7 +76,7 @@ class Engine:
             return interp
         return data.get(name, "")
 
-    # ---- génération ----
+    # ---- generation ----
     @staticmethod
     def gen(kind: str, length: int) -> str:
         length = length or DEFAULT_LEN.get(kind, 24)
@@ -89,7 +89,7 @@ class Engine:
             return "bv:" + "".join(pysecrets.choice(alpha) for _ in range(length))
         return "".join(pysecrets.choice(alpha) for _ in range(length))
 
-    # ---- rendu des sinks env -> rendered/<svc>.env ----
+    # ---- render env sinks -> rendered/<svc>.env ----
     def service_map(self, data: dict = None) -> dict:
         data = self.data if data is None else data
         services = {}
@@ -106,18 +106,18 @@ class Engine:
         os.chmod(RENDER_DIR, 0o700)
         for svc, kv in services.items():
             write_env(RENDER_DIR / f"{svc}.env", kv,
-                      header=f"RENDERED pour '{svc}' par bv-secrets — ne pas éditer ; "
-                             f"modifier secrets.conf / bv-secrets.env puis re-render.")
+                      header=f"RENDERED for '{svc}' by bv-secrets — do not edit; "
+                             f"change secrets.conf / bv-secrets.env then re-render.")
         return services
 
-    # ---- applicateurs ----
+    # ---- appliers ----
     def _run(self, argv, inp=None, cwd=None):
         return subprocess.run(argv, input=inp, capture_output=True, cwd=cwd)
 
     def _apply_sink(self, sink: str, value: str, eff: dict, dry: bool, log) -> bool:
         typ, _, arg = sink.partition(":")
         if typ == "env":
-            return True                      # matérialisé par render()
+            return True                      # materialized by render()
         if dry:
             log(f"    would apply {typ}: {arg[:60]}")
             return True
@@ -130,9 +130,9 @@ class Engine:
         if typ == "linux":
             user, _, host = arg.partition("@")
             if host:
-                log(f"    sink linux distant refusé (local-only): {arg}")
+                log(f"    remote linux sink refused (local-only): {arg}")
                 return False
-            # doas demande l'élévation sur le TTY : réservé au CLI interactif
+            # doas prompts for elevation on the TTY: interactive CLI only
             return self._run(["doas", "chpasswd"], inp=f"{user}:{value}\n".encode()).returncode == 0
         if typ == "mysql":
             return self._apply_mysql(arg, value, eff)
@@ -160,12 +160,12 @@ class Engine:
 
         r = alter("localhost" if dbuser == "root" else "%")
         if r.returncode != 0 and dbuser == "root":
-            r = alter("%")               # root peut n'exister qu'en 'root'@'%'
+            r = alter("%")               # root may only exist as 'root'@'%'
         return r.returncode == 0
 
     def _apply_cmd(self, arg: str, value: str, eff: dict) -> bool:
-        # {value} est laissé littéral ici puis substitué : REF le résoudrait sinon
-        # vers "" puisqu'aucun secret ne porte ce nom.
+        # {value} kept literal then substituted: REF would otherwise resolve it to
+        # "" since no secret bears that name.
         def sub(m):
             return m.group(0) if m.group(1) == "value" else self.value_of(m.group(1), eff)
         cmd = REF.sub(sub, arg).replace("{value}", value)
@@ -177,21 +177,20 @@ class Engine:
             dbuser, _, ctr = arg.partition("@")
             return self._run(["docker", "exec", "-i", "-e", f"MYSQL_PWD={value}",
                               ctr, "mariadb", "-u", dbuser, "-e", "SELECT 1"]).returncode == 0
-        return True                      # env/file/linux/cmd : pas de vérif non destructive
+        return True                      # env/file/linux/cmd: no non-destructive check
 
-    # ---- recréation des conteneurs ----
+    # ---- container recreation ----
     def affected_computed(self, names) -> list:
         return [cn for cn, c in self.cfg.items()
                 if c["kind"] == "computed" and any(r in names for r in REF.findall(c["compute"]))]
 
     def services_to_recreate(self, names) -> list:
-        """Services dont le conteneur doit être recréé après application.
+        """Services whose container must be recreated after apply.
 
-        DÉRIVÉ des sinks, jamais déclaré à la main : un sink `env:<svc>#VAR` écrit dans
-        rendered/<svc>.env, que le conteneur ne relit qu'à la création. Sans recréation
-        le process garde l'ancienne valeur. Les `computed` référençant un secret roté
-        comptent aussi. `norestart` exclut les services qui ne lisent la variable qu'à
-        l'init (mariadb : le mot de passe réel est posé par le sink mysql:).
+        DERIVED from sinks, never declared by hand: an `env:<svc>#VAR` sink writes
+        rendered/<svc>.env, which a container only re-reads at creation. `computed`
+        secrets referencing a rotated one count too. `norestart` excludes services
+        that read the var only at init (mariadb: the real password is set by mysql:).
         """
         svcs, skip = [], set()
         for n in list(names) + self.affected_computed(names):
@@ -209,12 +208,12 @@ class Engine:
             if dry:
                 log(f"    would recreate {svc}")
                 continue
-            # --force-recreate : un `restart` réutilise le conteneur et ne relit pas
-            # env_file, la nouvelle valeur ne serait jamais prise en compte.
+            # --force-recreate: a `restart` reuses the container and doesn't re-read
+            # env_file, so the new value would never be picked up.
             self._run(["docker", "compose", "up", "-d", "--force-recreate", svc], cwd=COMPOSE_DIR)
             log(f"    recreate {svc}  ✓")
 
-    # ---- miroir chiffré ----
+    # ---- encrypted mirror ----
     def seal(self, quiet=False):
         if not KEYFILE.exists():
             KEYFILE.write_bytes(pysecrets.token_bytes(32))
@@ -229,7 +228,7 @@ class Engine:
         if not quiet:
             print(f"sealed -> {MIRROR} ({MIRROR.stat().st_size} bytes)")
 
-    # ---- meta : dates de dernier set ----
+    # ---- meta: last-set dates ----
     @staticmethod
     def meta() -> dict:
         return parse_env(META)
@@ -245,7 +244,7 @@ class Engine:
 
     # ---- doctor ----
     def probe_one(self, name: str):
-        """-> (status, detail) avec status 'ok' | 'fail' | 'none'."""
+        """-> (status, detail) with status 'ok' | 'fail' | 'none'."""
         c = self.cfg.get(name)
         if not c:
             return ("none", "secret inconnu")
@@ -262,7 +261,7 @@ class Engine:
             if sink.startswith("mysql:"):
                 ok = self._verify_sink(sink, value, self.data)
                 return ("ok", "login mysql") if ok else ("fail", "login mysql refusé")
-        # à défaut : parité store <-> rendered, qui détecte un render en retard
+        # fallback: store <-> rendered parity, catches a stale render
         for sink in c["sinks"]:
             if sink.startswith("env:"):
                 svc, _, var = sink[4:].partition("#")
@@ -281,7 +280,7 @@ class Engine:
         log(f"\n{tally['ok']} ok, {tally['fail']} KO, {tally['none']} sans probe.")
         return tally["fail"]
 
-    # ---- sélection ----
+    # ---- selection ----
     def select(self, only) -> list:
         if only:
             names = [n.strip() for n in only.split(",") if n.strip()] \
@@ -339,8 +338,8 @@ class Engine:
         log(f"\n✓ rotate terminé : {', '.join(targets)}. (valeurs via `bv-secrets get <NAME>`)")
 
     def _apply_live_sinks(self, targets, old, new, log):
-        """Applique les sinks non-env avec rollback. root en dernier, pour que les
-        ALTER précédents s'authentifient encore avec l'ancien mot de passe root."""
+        """Apply non-env sinks with rollback. root last, so earlier ALTERs can still
+        authenticate with the old root password."""
         order = sorted(targets, key=lambda n: 1 if n == "MARIADB_ROOT_PASSWORD" else 0)
         eff = dict(self.data)
         applied = []
@@ -364,7 +363,7 @@ class Engine:
             raise RotateAborted("rotate avorté — store inchangé.")
 
     def apply(self, names, do_it: bool, log):
-        """Pousse les valeurs COURANTES vers les sinks, sans régénérer."""
+        """Push CURRENT values to sinks without regenerating."""
         self.render()
         log("rendered/*.env réécrits.")
         if not do_it:
@@ -380,13 +379,12 @@ class Engine:
         self.recreate(names, False, log)
         log("✓ apply terminé.")
 
-    # ---- lecture des localisations : import + dérive ----
+    # ---- reading locations: import + drift ----
     def read_at(self, sink: str):
-        """Valeur en place à cette localisation, best-effort. None si non lisible.
+        """In-place value at this location, best-effort. None if unreadable.
 
-        Un sink `env:svc#VAR` (raccourci compose) est lu dans rendered/<svc>.env,
-        où render() a matérialisé la valeur. Les sinks purement inscriptibles
-        (mysql, linux, cmd) n'ont pas de lecture bon marché -> None."""
+        An `env:svc#VAR` sink is read from rendered/<svc>.env where render()
+        materialized the value. Write-only sinks (mysql, linux, cmd) -> None."""
         scheme = sink.split(":", 1)[0]
         if scheme == "env":
             svc, _, var = sink[4:].partition("#")
@@ -399,7 +397,7 @@ class Engine:
         return None
 
     def read_current(self, name: str):
-        """Première valeur lisible parmi les localisations d'un secret : (valeur, sink)."""
+        """First readable value among a secret's locations: (value, sink)."""
         for sink in self.cfg.get(name, {}).get("sinks", []):
             value = self.read_at(sink)
             if value not in (None, ""):
@@ -407,10 +405,10 @@ class Engine:
         return None, None
 
     def import_one(self, name: str, source: str = None, force: bool = False, log=print):
-        """Adopte la valeur en place : la lit là où elle vit, l'écrit dans le store.
+        """Adopt the in-place value: read where it lives, write to the store.
 
-        Ne touche à rien dehors — c'est l'inverse d'apply. Sans --force, un secret
-        déjà présent au store est laissé tel quel."""
+        Touches nothing outside; the inverse of apply. Without --force, a secret
+        already in the store is left as-is."""
         if name not in self.cfg:
             raise ConfigError(f"secret inconnu: {name}")
         if self.data.get(name) and not force:
@@ -442,7 +440,7 @@ class Engine:
         return adopted
 
     def status(self, names, log):
-        """Compare la valeur du store à celle en place : synchronisé / dérive / absent."""
+        """Compare store value to in-place: synced / drift / missing."""
         counts = {"sync": 0, "drift": 0, "extern": 0, "unknown": 0}
         for n in names:
             stored = self.value_of(n)
@@ -462,7 +460,7 @@ class Engine:
         return counts["drift"]
 
     def scan(self, location: str, log):
-        """Liste les clés d'un fichier pour aider à déclarer les secrets."""
+        """List a file's keys to help declare secrets."""
         target = location if ":" in location else f"envfile:{location}"
         scheme, path, _ = locations.split(target)
         if scheme != "envfile":
@@ -474,9 +472,9 @@ class Engine:
         log(f"\n{len(keys)} clé(s) — ✓ déjà gérée, + à déclarer.")
         return keys
 
-    # ---- cohérence ----
+    # ---- consistency ----
     def check(self) -> list:
-        """-> liste des problèmes (chaînes). Vide = config saine."""
+        """-> list of problems (strings). Empty = healthy config."""
         from .config import GROUPS, SINK_TYPES, looks_like_apikey
         problems = []
         for n, c in self.cfg.items():
@@ -498,7 +496,7 @@ class Engine:
         return problems
 
     def render_parity(self) -> list:
-        """Écarts entre ce que render() écrirait et les rendered actuels."""
+        """Differences between what render() would write and the current renders."""
         problems = []
         for svc, kv in self.service_map().items():
             cur = parse_env(RENDER_DIR / f"{svc}.env")

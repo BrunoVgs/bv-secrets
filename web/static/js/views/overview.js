@@ -1,4 +1,4 @@
-/* Vue d'ensemble : compteurs et derniers changements. */
+/* Overview: counters and recent changes. */
 import { $, bindAll, esc } from "../dom.js";
 import { openDrawer } from "../drawer.js";
 import { rel } from "../format.js";

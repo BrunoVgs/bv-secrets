@@ -1,13 +1,13 @@
-"""Onboarding d'une application : détecter les secrets d'un fichier de config,
-proposer leur déclaration, adopter leurs valeurs.
+"""App onboarding: detect a config file's secrets, propose declarations, adopt
+their values.
 
-Le classifieur n'est qu'une heuristique : le résultat est TOUJOURS proposé pour
-relecture, jamais écrit sans confirmation. Il transforme « éditer secrets.conf à
-la main » en « relire une liste et ajuster ».
+The classifier is a heuristic: the result is ALWAYS proposed for review, never
+written without confirmation. Turns "edit secrets.conf by hand" into "review a
+list and adjust".
 
-Limité aux fichiers env : l'énumération des clés y est fiable et le connecteur
-`envfile:` sait relire ET réécrire. Les configs structurés (YAML/JSON) s'adoptent
-à la main avec `add` + `regex:` tant que leurs écrivains dédiés n'existent pas.
+Env files only: key enumeration is reliable there and the `envfile:` connector
+reads AND writes. Structured configs (YAML/JSON) are adopted by hand with `add` +
+`regex:` until dedicated writers exist.
 """
 import re
 from collections import namedtuple
@@ -15,8 +15,8 @@ from collections import namedtuple
 from . import locations
 from .config import looks_like_apikey
 
-# Un nom se lit par segments (DB_PASSWORD -> {DB, PASSWORD}) pour éviter qu'une
-# sous-chaîne trompe la détection (MONKEY ne contient pas le secret « KEY »).
+# Names are read by segment (DB_PASSWORD -> {DB, PASSWORD}) so a substring doesn't
+# fool detection (MONKEY doesn't contain the "KEY" token).
 _SECRET_TOKENS = {"PASS", "PASSWORD", "PWD", "SECRET", "TOKEN", "APIKEY", "KEY",
                   "CREDENTIAL", "CREDENTIALS", "AUTH", "SALT", "SEED", "PRIVATE", "DSN"}
 _CONFIG_TOKENS = {"HOST", "HOSTNAME", "PORT", "URL", "URI", "PATH", "DIR", "NAME",
@@ -31,7 +31,7 @@ def _tokens(name):
 
 
 def _embeds_credentials(value):
-    # une URL/DSN qui porte des identifiants : scheme://user:pass@host
+    # a URL/DSN carrying credentials: scheme://user:pass@host
     return bool(re.search(r"://[^/\s:@]+:[^/\s@]+@", value or ""))
 
 
@@ -43,13 +43,13 @@ def looks_secret(name, value):
         return True
     if tokens & _CONFIG_TOKENS:
         return False
-    # ni nom parlant ni config connue : une valeur longue et variée est suspecte
+    # no telltale name, no known config: a long, varied value is suspect
     return bool(value) and len(value) >= 24 and len(set(value)) >= 10
 
 
 def guess_kind(name, value):
     if looks_like_apikey(name):
-        return "apikey"                      # nom en API/TOKEN -> jamais générable
+        return "apikey"                      # name in API/TOKEN -> never generatable
     value = value or ""
     if re.fullmatch(r"[0-9a-fA-F]{16,}", value):
         return "hex"
@@ -59,17 +59,17 @@ def guess_kind(name, value):
 
 
 def default_group(kind):
-    # une clé émise par une app n'est jamais générable -> manual ; le reste part en
-    # `app` (rotable uniquement si ciblé), jamais `auto` : on n'aspire pas un secret
-    # tiers dans la rotation automatique avant que l'humain ait validé que c'est sûr.
+    # an app-issued key is never generatable -> manual; everything else -> `app`
+    # (rotated only if targeted), never `auto`: don't pull a third-party secret into
+    # automatic rotation before a human confirms it's safe.
     return "manual" if kind == "apikey" else "app"
 
 
 def plan_envfile(path, prefix="", known=frozenset()):
-    """-> (proposals, ignored, conflicts) pour un fichier env.
+    """-> (proposals, ignored, conflicts) for a .env file.
 
-    proposals : secrets à déclarer ; ignored : clés jugées non secrètes ;
-    conflicts : noms déjà pris dans secrets.conf (à préfixer)."""
+    proposals: secrets to declare; ignored: keys judged non-secret;
+    conflicts: names already taken in secrets.conf (need a prefix)."""
     proposals, ignored, conflicts = [], [], []
     for key in locations.env_keys(str(path)):
         value = locations.env_read(str(path), key)

@@ -1,8 +1,5 @@
-"""Lecture/écriture des fichiers .env du store.
-
-Découpage sur le PREMIER `=` seulement et valeurs conservées verbatim : une valeur
-peut contenir `=`, des espaces ou des guillemets sans être altérée.
-"""
+"""Read/write the store's .env files. Split on the FIRST `=` only, values kept
+verbatim: a value may contain `=`, spaces or quotes without being altered."""
 import os
 from pathlib import Path
 
@@ -25,7 +22,7 @@ def parse_env(path: Path) -> dict:
 
 
 def write_env(path: Path, data: dict, header: str = "") -> None:
-    """Écriture atomique en 0600 : aucun lecteur ne voit de fichier partiel."""
+    """Atomic 0600 write: no reader ever sees a partial file."""
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     lines = []
     if header:

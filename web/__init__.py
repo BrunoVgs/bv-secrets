@@ -1,1 +1,1 @@
-"""Dashboard web bv-secrets — façade lecture seule au-dessus du moteur."""
+"""bv-secrets web dashboard — read-only facade over the engine."""

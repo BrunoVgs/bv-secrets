@@ -1,4 +1,4 @@
-/* Coquille applicative : barre latérale, zone principale, en-tête. */
+/* App shell: sidebar, main area, header. */
 .app{display:flex;min-height:100vh;width:100%}
 
 .side{width:230px;flex:none;display:flex;flex-direction:column;gap:6px;padding:22px 14px;

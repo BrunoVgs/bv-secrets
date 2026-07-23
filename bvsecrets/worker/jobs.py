@@ -1,8 +1,7 @@
-"""Handlers des jobs déposés par l'UI web dans le spool.
+"""Handlers for jobs the web UI drops in the spool.
 
-Chaque handler reçoit (job, log) et renvoie une charge utile JSON ou None. Les
-journaux remontent tels quels dans la console du dashboard : ils ne doivent
-contenir aucune valeur de secret.
+Each handler takes (job, log) and returns a JSON payload or None. Logs surface
+verbatim in the dashboard console, so they must contain no secret value.
 """
 import json
 import subprocess
@@ -17,7 +16,7 @@ ROLES_OK = set(ROLES)
 
 
 def run(cmd, log, timeout=180):
-    """Exécute une commande et journalise sa sortie ; lève si le code est non nul."""
+    """Run a command and log its output; raise on non-zero exit."""
     log(f"$ {' '.join(cmd)}")
     p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     for line in (p.stdout + p.stderr).splitlines():
@@ -27,11 +26,11 @@ def run(cmd, log, timeout=180):
 
 
 def do_access(job, log):
-    """Applique une matrice service -> rôles : set (préserve access.conf), render all,
-    puis rechargement des services qui consomment la matrice.
+    """Apply a service -> roles matrix: set (preserving access.conf), render all,
+    then reload services that consume the matrix.
 
-    Le proxy est recréé et non redémarré : sa configuration est montée fichier par
-    fichier, un simple restart relirait l'ancienne."""
+    The proxy is recreated, not restarted: its config is mounted file by file, so a
+    plain restart would re-read the old one."""
     changes = job.get("changes") or []
     if not changes:
         raise RuntimeError("aucun changement d'accès")
@@ -55,14 +54,14 @@ def _validate_meta_change(cfg, name, kind, group):
         raise RuntimeError(f"secret inconnu: {name}")
     if kind is not None and kind not in ALL_KINDS:
         raise RuntimeError(f"kind invalide: {kind}")
-    # Une clé d'app tierce ne doit jamais devenir générable : un rotate écrirait une
-    # valeur aléatoire que l'app refuse, ce qui casse le service.
+    # A third-party key must never become generatable: a rotate would write a random
+    # value the app rejects, breaking the service.
     if looks_like_apikey(name) and kind in GEN_KINDS:
         raise RuntimeError(f"{name} est une CLE API : format générable interdit")
     if group is not None and group not in GROUPS:
         raise RuntimeError(f"group invalide: {group}")
-    # `computed` dépend d'une expression `compute` : ni attribué à l'aveugle, ni
-    # retiré d'un secret qui en possède une.
+    # `computed` depends on a `compute` expression: neither assigned blindly nor
+    # removed from a secret that has one.
     current = cfg[name]
     if kind == "computed" and not current.get("compute"):
         raise RuntimeError(f"{name}: computed exige une clé `compute` (CLI)")
@@ -71,8 +70,8 @@ def _validate_meta_change(cfg, name, kind, group):
 
 
 def do_meta(job, log):
-    """Change le FORMAT (kind) et/ou la POLITIQUE de rotation (group) d'un secret.
-    Ne touche à aucune valeur."""
+    """Change a secret's FORMAT (kind) and/or rotation POLICY (group). Touches no
+    value."""
     changes = job.get("changes") or []
     if not changes:
         raise RuntimeError("aucun changement")
@@ -83,15 +82,15 @@ def do_meta(job, log):
         _validate_meta_change(cfg, name, kind, group)
         lines = rewrite_section(lines, name, kind, group, log)
     write_conf_lines(lines)
-    Engine()                      # relecture : échoue ici si la conf est cassée
+    Engine()                      # reload: fails here if the conf is broken
     log("secrets.conf relu — OK")
 
 
 def _console(args, log, timeout=120):
-    """Lance une commande de console dans le service d'authentification.
+    """Run a console command in the auth service.
 
-    Intégration optionnelle : sans BV_AUTH_SERVICE, la gestion des comptes est
-    simplement indisponible plutôt que dirigée vers un service arbitraire."""
+    Optional integration: without BV_AUTH_SERVICE, account management is simply
+    unavailable rather than pointed at an arbitrary service."""
     if not AUTH_SERVICE:
         raise RuntimeError("gestion des comptes indisponible : BV_AUTH_SERVICE non "
                            "configuré (voir deploy/bvsecrets-worker.confd.example)")
@@ -112,7 +111,7 @@ def _silent(*_):
 
 
 def do_users(job, log):
-    """Liste les comptes du portail ; aucun mot de passe n'est lu."""
+    """List portal accounts; no password is read."""
     out = _console(["app:users"], _silent)
     for ln in out.splitlines():
         ln = ln.strip()
@@ -124,8 +123,8 @@ def do_users(job, log):
 
 
 def do_user(job, log):
-    """Change le rôle d'un compte ou le supprime. Le garde-fou du dernier admin
-    est porté par la commande Symfony."""
+    """Change an account's role or delete it. The last-admin guard lives in the
+    Symfony command."""
     op, name = str(job.get("op", "")), str(job.get("username", ""))
     if not name:
         raise RuntimeError("compte manquant")
@@ -141,5 +140,5 @@ def do_user(job, log):
     return do_users(job, _silent)
 
 
-# Actions qui ne touchent pas aux secrets : traitées sans instancier Engine.
+# Actions that don't touch secrets: handled without instantiating Engine.
 HANDLERS = {"access": do_access, "meta": do_meta, "users": do_users, "user": do_user}

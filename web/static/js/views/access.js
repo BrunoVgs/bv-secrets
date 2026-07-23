@@ -1,8 +1,8 @@
-/* Matrice service × rôle. La table est rendue côté serveur ; ce module ne gère
-   que l'édition et l'envoi du diff.
+/* Service x role matrix. The table is server-rendered; this module only handles
+   editing and sending the diff.
 
-   Seules les lignes effectivement modifiées sont envoyées : un diff naïf « tout
-   ce qui paraît décoché » retirait trusted de services jamais touchés. */
+   Only actually-changed rows are sent: a naive "everything that looks unchecked"
+   diff removed trusted from services never touched. */
 import { $, $$ } from "../dom.js";
 import { startJob, watchJob } from "../jobs.js";
 import { S } from "../state.js";

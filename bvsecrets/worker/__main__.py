@@ -1,4 +1,4 @@
-"""Permet `python -m bvsecrets.worker` en plus de `-m bvsecrets.worker.loop`."""
+"""Allows `python -m bvsecrets.worker` in addition to `-m bvsecrets.worker.loop`."""
 from .loop import main
 
 main()

@@ -1,4 +1,4 @@
-/* Tiroir de détail d'un secret : valeur révélable, format et politique de rotation. */
+/* Secret detail drawer: revealable value, format, rotation policy. */
 import { reveal } from "./api.js";
 import { $, esc } from "./dom.js";
 import { dotColor, rel } from "./format.js";
@@ -40,7 +40,7 @@ function valueSection(secret, revealed) {
 function formatNotice(secret, kind, group) {
   const generable = KINDS.gen.includes(kind);
   const wasGenerableAuto = KINDS.gen.includes(secret.kind) && secret.group === "auto";
-  // rendre un secret générable ET auto revient à le faire écraser au prochain rotate
+  // making a secret generatable AND auto means it gets overwritten on the next rotate
   const warn = generable && group === "auto" && !wasGenerableAuto
     ? '<div class="warn">Le prochain <b>rotate</b> du groupe auto écrasera cette valeur.</div>'
     : "";
@@ -172,7 +172,7 @@ async function saveMeta(name, kind, group) {
   const job = await startJob("api/meta/apply", { changes: [{ name, kind, group }] },
     { title: "format…", header: `# meta ${name} kind=${kind} group=${group}` });
   if (!job) return;
-  // la conf est relue côté serveur : on recharge pour repartir d'un boot cohérent
+  // the conf is reloaded server-side: reload to start from a consistent boot
   await finishJob(job.id, { onDone: () => location.reload() });
 }
 

@@ -82,7 +82,7 @@ $$("#kindFilters .filt").forEach((b) => {
 $("#search").oninput = (e) => { S.search = e.target.value.toLowerCase(); renderVault(); };
 bindSort("#coffreHead", "coffre", renderVault);
 
-// repliée par défaut : elle vit en bas de vue et ne sert qu'à la première lecture
+// collapsed by default: it sits at the bottom and only serves the first read
 const legend = $("#leg");
 legend.open = localStorage.getItem("bvLeg") === "1";
 legend.addEventListener("toggle", () => localStorage.setItem("bvLeg", legend.open ? "1" : "0"));

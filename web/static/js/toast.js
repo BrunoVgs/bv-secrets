@@ -1,4 +1,4 @@
-/* Notification brève. Un seul toast à l'écran : le précédent est remplacé. */
+/* Brief notification. One toast on screen: the previous one is replaced. */
 import { $ } from "./dom.js";
 
 let timer;

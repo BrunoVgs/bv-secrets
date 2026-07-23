@@ -1,8 +1,5 @@
-"""Vue lecture seule de l'inventaire, telle que consommée par l'UI.
-
-Le dashboard n'a aucun privilège d'écriture : ce module lit le store monté en
-read-only et ne renvoie jamais de valeur, seulement leur présence et leur longueur.
-"""
+"""Read-only inventory view for the UI. The dashboard has no write privilege: this
+reads the read-only store and never returns a value, only presence and length."""
 from bvsecrets import Engine, looks_like_apikey
 from bvsecrets.config import GEN_KINDS, ROTATE_GROUPS
 
@@ -12,8 +9,8 @@ def has_linux_sink(cfg, name):
 
 
 def rotatable(cfg, name):
-    """Rotable depuis le web : générable, groupe rotable, et sans sink `linux:`
-    dont l'élévation doas est interactive."""
+    """Rotatable from the web: generatable, rotatable group, and no `linux:` sink
+    (whose doas elevation is interactive)."""
     c = cfg.get(name)
     return bool(c) and c["kind"] in GEN_KINDS and c["group"] in ROTATE_GROUPS \
         and not has_linux_sink(cfg, name)
@@ -47,7 +44,7 @@ def list_data():
 
 
 def auto_targets():
-    """Secrets que « roter le groupe auto » viserait."""
+    """Secrets that "rotate the auto group" would target."""
     return Engine().select(None)
 
 

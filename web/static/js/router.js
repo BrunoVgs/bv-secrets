@@ -1,8 +1,9 @@
-/* Navigation entre les vues. */
+/* View navigation. */
 import { $, $$ } from "./dom.js";
 import { VIEW_TITLES } from "./labels.js";
 import { render } from "./render.js";
 import { S } from "./state.js";
+import { loadAudit } from "./views/audit.js";
 import { loadUsers } from "./views/users.js";
 
 export function go(view) {
@@ -18,6 +19,7 @@ export function go(view) {
   $("#viewSub").classList.toggle("hidden", !sub);
   render();
   if (view === "comptes" && S.users === null) loadUsers();
+  if (view === "audit" && S.audit === null) loadAudit();
 }
 
 $$(".nav").forEach((nav) => { nav.onclick = () => go(nav.dataset.view); });

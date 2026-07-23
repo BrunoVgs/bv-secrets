@@ -1,8 +1,8 @@
-"""Ajout de sections à secrets.conf.
+"""Append sections to secrets.conf.
 
-Partagé par `add` (une section à la main) et `adopt` (plusieurs, déduites d'un
-fichier). L'écriture est atomique ; la mise en forme reste lisible et stable pour
-que le fichier survive à une relecture par un humain.
+Shared by `add` (one section by hand) and `adopt` (several, inferred from a file).
+Atomic write; formatting stays readable and stable so the file survives a human
+re-read.
 """
 from .config import CONF
 
@@ -19,7 +19,7 @@ def render_section(name, kind, group, sinks, length=0, note=""):
 
 
 def append_sections(rendered_blocks):
-    """Ajoute un ou plusieurs blocs à la fin de secrets.conf, séparés par une ligne."""
+    """Append one or more blocks to the end of secrets.conf, blank-line separated."""
     existing = CONF.read_text(encoding="utf-8") if CONF.exists() else ""
     tail = "\n\n".join(rendered_blocks)
     tmp = CONF.with_suffix(".conf.tmp")

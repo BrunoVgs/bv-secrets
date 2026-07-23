@@ -1,12 +1,12 @@
-/* Helpers DOM partagés. */
+/* Shared DOM helpers. */
 export const $ = (sel, root = document) => root.querySelector(sel);
 export const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 
 export const esc = (s) => String(s).replace(/[&<>"]/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
-/* Attache un handler à chaque élément portant l'attribut, en coupant la
-   propagation : les lignes de tableau sont elles-mêmes cliquables. */
+/* Bind a handler to each element carrying the attribute, stopping propagation:
+   table rows are themselves clickable. */
 export function bindAll(attr, handler) {
   $$(`[${attr}]`).forEach((el) => {
     el.onclick = (ev) => {

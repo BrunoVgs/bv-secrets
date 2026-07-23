@@ -1,5 +1,5 @@
-/* Rotation : secrets rotables depuis le web. Les sinks `linux:` en sont exclus,
-   leur élévation doas étant interactive et donc réservée au CLI. */
+/* Rotation: secrets rotatable from the web. `linux:` sinks are excluded, their
+   doas elevation being interactive and thus CLI-only. */
 import { rotate } from "../actions.js";
 import { $, bindAll, esc } from "../dom.js";
 import { dotColor, rel } from "../format.js";

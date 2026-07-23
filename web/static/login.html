@@ -9,14 +9,33 @@
 <link rel=stylesheet href="static/__V__/css/views.css">
 <link rel=stylesheet href="static/__V__/css/animations.css">
 <link rel=icon type="image/png" href="static/__V__/img/favicon.png">
-</head><body><div class="loginwrap"><form class="loginbox" id="loginForm">
-<div class="brand" style="padding-bottom:4px">
-  <img class="mark" src="static/__V__/img/logo.png" alt="bv-secrets" width="40" height="40">
-  <div><div class="n">BV&#8209;SECRETS</div><div class="v">gestionnaire de secrets</div></div>
+</head><body class="loginpage">
+
+<!-- Animated background, under the form. offset-x NEGATIVE shifts left:
+     the shader does `suv.x -= iOffsetX`, a positive value pushes right.
+     Stays empty if the three.js CDN is unreachable. -->
+<bv-orbs id="loginfx" offset-x="-0.36" aria-hidden="true"></bv-orbs>
+
+<div class="loginwrap"><form class="loginbox" id="loginForm">
+<p class="err" id="loginErr"></p><!--BV:WARN-->
+
+<div class="brand">
+  <span class="markwrap">
+    <span class="ring" aria-hidden="true"></span>
+    <span class="ring2" aria-hidden="true"></span>
+    <img class="mark" src="static/__V__/img/logo.png" alt="bv-secrets" width="68" height="68">
+  </span>
+  <div class="n">BV&#8209;SECRETS</div>
 </div>
-<p class="dim" style="margin:0;font-size:12.5px">Second verrou applicatif — le portail admin ne suffit pas.</p>
-<input type=password id="pw" placeholder="Mot de passe" autofocus autocomplete=current-password>
+
+<div class="field">
+  <label for="pw">Mot de passe</label>
+  <input type=password id="pw" placeholder="••••••••" autofocus autocomplete=current-password>
+</div>
+
 <button class="btn big solid" type=submit>Entrer</button>
-<p class="err" id="loginErr"></p><!--BV:WARN--></form></div>
+</form></div>
+
+<script type="module" src="static/__V__/js/orbs.js"></script>
 <script type="module" src="static/__V__/js/login.js"></script>
 </body></html>

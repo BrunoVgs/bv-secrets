@@ -31,7 +31,7 @@
     <div class="who"><span class="av">BV</span><span>admin</span></div>
   </header>
 
-  <!-- VUE D'ENSEMBLE -->
+  <!-- OVERVIEW -->
   <section class="view" data-view="overview">
     <div class="stats" id="ovStats"></div>
     <div class="duo">
@@ -50,7 +50,7 @@
     </div>
   </section>
 
-  <!-- COFFRE -->
+  <!-- VAULT -->
   <section class="view hidden" data-view="coffre">
     <div class="bar">
       <input class="search" id="search" placeholder="Rechercher…">
@@ -118,7 +118,7 @@
     </div>
   </section>
 
-  <!-- COMPTES -->
+  <!-- ACCOUNTS -->
   <section class="view hidden" data-view="comptes">
     <div class="panel">
       <div class="ph"><span class="sq"></span><span class="t">COMPTES DU PORTAIL</span>
@@ -131,7 +131,7 @@
       Le détail service par service est dans « Accès &amp; rôles ».</div>
   </section>
 
-  <!-- ACCÈS -->
+  <!-- ACCESS -->
   <section class="view hidden" data-view="acces">
     <div class="panel">
       <div class="ph"><span class="sq"></span><span class="t">MATRICE SERVICE × RÔLE</span>
@@ -145,6 +145,32 @@
       <button class="btn big solid" id="accessSave" data-busy>💾 Appliquer</button>
       <span class="cli" id="accessStatus"></span>
     </div>
+  </section>
+
+  <!-- AUDIT -->
+  <section class="view hidden" data-view="audit">
+    <div class="bar">
+      <select class="search" id="auditSource" style="flex:0 0 auto">
+        <option value="all">toutes sources</option>
+        <option value="access">accès (Caddy)</option>
+        <option value="trail">actions (worker)</option>
+        <option value="host">hôte (ssh/doas)</option>
+        <option value="rotdate">rotations</option>
+      </select>
+      <input class="search" id="auditService" placeholder="filtrer service / cible…">
+      <label class="cli" style="display:flex;align-items:center;gap:6px">
+        <input type="checkbox" id="auditDenied"> refusés seulement</label>
+      <span class="cli" id="auditFresh"></span>
+    </div>
+    <div class="panel">
+      <div class="row g-audit head"><div>QUAND</div><div>SOURCE</div><div>ACTEUR</div>
+        <div>CIBLE</div><div>RÉSULTAT</div><div>DÉTAIL</div></div>
+      <div id="auditRows"></div>
+    </div>
+    <div class="cli">Lentille en lecture seule sur des logs qui existent déjà : accès Caddy
+      (qui a consulté quoi, refus), jobs du worker, connexions SSH/doas, dates de rotation.
+      Aucune valeur de secret n'y figure. Le worker rafraîchit ce journal en continu — voir la
+      fraîcheur ci-dessus.</div>
   </section>
 
   <!-- DOCS -->
@@ -166,7 +192,8 @@
 <dt>add NAME --sink …</dt><dd>Enregistre un nouveau secret + ses cibles en une ligne.</dd>
 <dt>check · verify-render</dt><dd>Cohérence config + perms 0600 ; parité des rendus.</dd>
 <dt>seal · open</dt><dd>Miroir chiffré du store (backup hors-machine).</dd>
-<dt>audit</dt><dd>Scanne le repo à la recherche de valeurs en clair.</dd>
+<dt>audit [--source --since --denied]</dt><dd>Timeline unifiée : qui a atteint quoi, quand, d'où, et ce qui a changé (onglet <b>Audit</b>). Agrège des logs existants, aucune valeur.</dd>
+<dt>leaks</dt><dd>Scanne le repo à la recherche de valeurs gérées présentes en clair.</dd>
 </dl></div></div>
 <h3>Concepts</h3>
 <dl>
@@ -177,6 +204,7 @@
 <dt>probe</dt><dd>Commande de vérification déclarée par secret (<span class=k>doctor</span>) : teste la valeur contre la vraie app, exit 0 = ✓. Jamais destructif, n'affiche aucune valeur.</dd>
 <dt>worker</dt><dd>Le <b>seul</b> composant privilégié (docker + store rw). Le dashboard n'a aucun privilège : il dépose un job dans le spool, le worker l'exécute et renvoie un log <b>sans valeur</b>.</dd>
 <dt>accès</dt><dd>La carte <b>Accès</b> édite <span class=k>access/access.conf</span> (source unique « qui voit quoi ») ; le worker relance le rendu, recrée le reverse-proxy puis redémarre les services concernés.</dd>
+<dt>audit</dt><dd>Lentille en <b>lecture seule</b> sur des logs qui existent déjà : accès Caddy (IP, service, autorisé/refusé), trail des jobs du worker, connexions ssh/doas, dates de rotation. Pas de collecte ni de rétention. Les sources root (Caddy, syslog) restent lues par le CLI en privilégié ; le dashboard en affiche le dernier instantané daté.</dd>
 </dl>
     </div></div>
   </section>

@@ -1,4 +1,4 @@
-"""Construction des pages servies : login et dashboard."""
+"""Build the served pages: login and dashboard."""
 import json
 
 from bvsecrets.config import ALL_KINDS, GEN_KINDS
@@ -12,6 +12,7 @@ NAV_ITEMS = [
     ("rotation", "Rotation", "auto"),
     ("comptes", "Comptes", None),
     ("acces", "Accès &amp; rôles", "services"),
+    ("audit", "Audit", None),
     ("docs", "Docs", None),
 ]
 
@@ -37,7 +38,7 @@ def dashboard(csrf: str) -> str:
     rows = inventory.list_data()
     auto = inventory.auto_targets()
     services = access.matrix()["services"]
-    # Les "<" sont échappés : la charge utile ne peut pas fermer le <script> qui la porte.
+    # "<" is escaped: the payload can't close the <script> tag carrying it.
     boot = json.dumps({
         "csrf": csrf,
         "secrets": rows,

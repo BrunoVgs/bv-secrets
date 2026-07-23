@@ -1,10 +1,10 @@
-"""Dashboard bv-secrets — façade HTTP sans privilège.
+"""bv-secrets dashboard — unprivileged HTTP facade.
 
-Le store est monté read-only et aucune rotation n'est exécutée ici : les actions
-déposent un job dans le spool, que le worker privilégié traite sur l'hôte.
+The store is mounted read-only and no rotation runs here: actions drop a job in the
+spool, which the privileged worker runs on the host.
 
-Gardes : mot de passe applicatif (en plus du portail admin Caddy), session cookie
-HttpOnly/Secure/SameSite=Strict en mémoire, POST protégés par double-submit CSRF.
+Guards: app password (on top of the Caddy admin gate), in-memory
+HttpOnly/Secure/SameSite=Strict session cookie, POSTs protected by double-submit CSRF.
 """
 import json
 import os
@@ -74,7 +74,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if path == "/health":
                 return self._send(200, "ok", "text/plain")
-            # les assets précèdent le contrôle de session : la page de login en a besoin
+            # assets before the session check: the login page needs them
             if path.startswith("/static/"):
                 return self._serve_asset(path[len("/static/"):])
             if path == "/":
@@ -92,7 +92,7 @@ class Handler(BaseHTTPRequestHandler):
         path = asset(rel)
         if not path:
             return self._json(404, {"error": "not found"})
-        # l'URL porte l'empreinte du contenu : immuable, donc cachable à vie
+        # URL carries the content hash: immutable, so cacheable forever
         return self._send(200, path.read_bytes(), ASSET_TYPES[path.suffix], cache=IMMUTABLE)
 
     def _serve_root(self):

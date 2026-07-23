@@ -1,5 +1,5 @@
-/* Comptes du portail. Les garde-fous (dernier admin) sont portés côté Symfony ;
-   l'UI les reflète en désactivant les contrôles correspondants. */
+/* Portal accounts. Guards (last admin) live in Symfony; the UI reflects them by
+   disabling the matching controls. */
 import { $, bindAll, esc } from "../dom.js";
 import { rel } from "../format.js";
 import { startJob, watchJob } from "../jobs.js";

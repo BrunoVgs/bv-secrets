@@ -1,7 +1,7 @@
-/* Registre de rendu.
+/* Render registry.
 
-   Chaque vue enregistre sa fonction de rendu ; les actions appellent render()
-   sans connaître les vues. Évite les imports croisés entre vues et actions. */
+   Each view registers its render function; actions call render() without knowing
+   the views. Avoids cross-imports between views and actions. */
 const renderers = [];
 
 export function register(fn) {

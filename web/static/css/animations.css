@@ -1,7 +1,7 @@
-/* Tout le mouvement de l'interface.
+/* All interface motion.
 
-   Les listes s'animent en cascade via --i, l'index de ligne posé par le rendu :
-   le délai reste plafonné pour qu'un long tableau finisse d'apparaître vite. */
+   Lists cascade via --i, the row index set by rendering: the delay stays capped so
+   a long table finishes appearing fast. */
 
 @keyframes bv-pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.45;transform:scale(.86)}}
 @keyframes bv-rise{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:none}}
@@ -16,21 +16,21 @@
 @keyframes bv-shimmer{from{background-position:-380px 0}to{background-position:380px 0}}
 @keyframes bv-sweep{from{transform:translateX(-100%)}to{transform:translateX(220%)}}
 
-/* ── entrée des vues ── */
+/* ── view entrance ── */
 .view:not(.hidden){animation:bv-slide-up var(--t-slow) var(--ease-out) both}
 
-/* ── cascade des listes et des cartes ── */
+/* ── list and card cascade ── */
 .stat,.row:not(.head){animation:bv-rise var(--t-mid) var(--ease) both;
   animation-delay:calc(min(var(--i,0) * 22ms, 400ms))}
 .tag,.chip{animation:bv-pop var(--t-mid) var(--ease-spring) both}
 
-/* ── barre latérale ── */
+/* ── sidebar ── */
 .nav{transition:background var(--t-fast),color var(--t-fast),border-color var(--t-fast),
   transform var(--t-fast) var(--ease)}
 .nav:hover{background:var(--hover);transform:translateX(3px)}
 .nav .dot{transition:background var(--t-mid),transform var(--t-mid) var(--ease-spring)}
 .nav.on .dot{transform:scale(1.35)}
-/* liseré rouge qui se déploie sur l'onglet actif */
+/* red edge that unfolds on the active tab */
 .nav::before{content:"";position:absolute;left:0;top:50%;width:2px;height:0;
   background:var(--acc2);border-radius:0 2px 2px 0;transform:translateY(-50%);
   transition:height var(--t-mid) var(--ease-out)}
@@ -42,7 +42,7 @@
 .brand:hover .mark{transform:rotate(-8deg) scale(1.08);
   filter:drop-shadow(0 5px 16px rgba(192,36,44,.7))}
 
-/* ── panneaux et lignes ── */
+/* ── panels and rows ── */
 .panel{transition:border-color var(--t-mid)}
 .stat{transition:border-color var(--t-mid),transform var(--t-mid) var(--ease),
   background var(--t-mid)}
@@ -52,21 +52,21 @@
 .row.click:hover{background:rgba(255,255,255,.03);box-shadow:inset 2px 0 0 var(--acc2)}
 .dot{transition:background var(--t-mid) var(--ease)}
 
-/* ── en-têtes triables ── */
+/* ── sortable headers ── */
 .row.head .srt{transition:color var(--t-fast)}
 .row.head .srt:hover{color:#e0e0e0}
 .row.head .srt .ar{transition:opacity var(--t-fast),transform var(--t-mid) var(--ease-spring);
   display:inline-block}
 .row.head .srt.on .ar{transform:scale(1.15)}
 
-/* ── contrôles ── */
+/* ── controls ── */
 .btn{transition:border-color var(--t-fast),color var(--t-fast),background var(--t-fast),
   transform var(--t-fast) var(--ease-spring);overflow:hidden}
 .btn:hover:not(:disabled){border-color:rgba(192,36,44,.5);color:var(--acc3);transform:translateY(-1px)}
 .btn:active:not(:disabled){transform:translateY(0) scale(.97)}
 .btn.acc:hover:not(:disabled){background:rgba(192,36,44,.22)}
 .btn.solid:hover:not(:disabled){filter:brightness(1.15);box-shadow:0 6px 20px rgba(192,36,44,.42)}
-/* reflet qui balaie le bouton principal au survol */
+/* sheen sweeping the primary button on hover */
 .btn.solid::after{content:"";position:absolute;inset:0;pointer-events:none;
   background:linear-gradient(100deg,transparent,rgba(255,255,255,.22),transparent);
   transform:translateX(-100%)}
@@ -84,7 +84,7 @@ input.search{transition:border-color var(--t-fast),box-shadow var(--t-fast),max-
 #accessTable input[type=checkbox]:active:not(:disabled){transform:scale(.93)}
 #accessTable tbody tr{transition:background var(--t-mid)}
 
-/* ── tiroir ── */
+/* ── drawer ── */
 #scrim{animation:bv-fade var(--t-mid) var(--ease) both}
 #drawer{animation:bv-slide-left var(--t-mid) var(--ease-out) both}
 #drawer .sec,#drawer .meta{animation:bv-rise var(--t-mid) var(--ease) both;
@@ -92,10 +92,10 @@ input.search{transition:border-color var(--t-fast),box-shadow var(--t-fast),max-
 .valbox{transition:border-color var(--t-mid)}
 .valbox .v.on{animation:bv-fade var(--t-mid) var(--ease) both}
 
-/* ── légende ──
-   La hauteur d'un <details> n'est pas animable de façon fiable (le contenu n'est
-   pas rendu quand il est replié) : c'est donc l'apparition des colonnes qui est
-   animée, en cascade, au moment où le bloc devient visible. */
+/* ── legend ──
+   A <details> height can't be animated reliably (content isn't rendered while
+   collapsed), so the column appearance is animated, cascading, when the block
+   becomes visible. */
 details.leg{transition:border-color var(--t-mid),background var(--t-mid)}
 details.leg:hover{border-color:rgba(192,36,44,.45)}
 details.leg[open]{background:rgba(192,36,44,.07)}
@@ -109,18 +109,30 @@ details.leg[open] .legcol:nth-child(4){animation-delay:.19s}
 .legcol div{transition:transform var(--t-fast) var(--ease)}
 .legcol div:hover{transform:translateX(3px)}
 
-/* ── console du worker et toast ── */
+/* ── worker console and toast ── */
 #jobpanel.on{animation:bv-slide-up var(--t-mid) var(--ease-out) both}
 #joblog>div{animation:bv-rise .18s var(--ease) both}
 #toast{animation:bv-toast 2.4s var(--ease) forwards}
 
-/* ── états transitoires ── */
+/* ── transient states ── */
 .loginbox.shake{animation:bv-shake .42s var(--ease)}
 .skel{height:14px;border-radius:5px;margin:6px 0;
   background:linear-gradient(90deg,rgba(255,255,255,.04),rgba(255,255,255,.10),rgba(255,255,255,.04));
   background-size:380px 100%;animation:bv-shimmer 1.25s linear infinite}
-/* pendant un job : la bordure du panneau respire pour signaler l'attente */
+/* during a job: the panel border breathes to signal waiting */
 .panel.busy{border-color:rgba(192,36,44,.35);animation:bv-pulse 1.8s ease-in-out infinite}
+
+/* login: rings around the logo, inert until sign-in starts */
+.loginbox .ring,.loginbox .ring2{position:absolute;border-radius:50%;opacity:0;
+  pointer-events:none;transition:opacity var(--t-slow) var(--ease-out)}
+.loginbox .ring{inset:0;border:2px solid rgba(192,36,44,.12);
+  border-top-color:var(--acc2);border-right-color:var(--acc2);
+  box-shadow:0 0 18px rgba(192,36,44,.45),inset 0 0 10px rgba(192,36,44,.12)}
+.loginbox .ring2{inset:11px;border:1.5px solid transparent;border-bottom-color:rgba(214,58,66,.5)}
+.loginbox.pending .ring{opacity:1;animation:bv-ring .95s cubic-bezier(.5,.15,.4,.9) infinite}
+.loginbox.pending .ring2{opacity:1;animation:bv-ring 1.7s linear infinite reverse}
+.loginbox.pending .mark{filter:drop-shadow(0 3px 16px rgba(192,36,44,.7))}
+@keyframes bv-ring{to{transform:rotate(360deg)}}
 
 @media(prefers-reduced-motion:reduce){
   *,*::before,*::after{animation-duration:.01ms !important;animation-iteration-count:1 !important;

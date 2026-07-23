@@ -1,4 +1,4 @@
-/* Accès HTTP. Toutes les mutations passent par un job : le dashboard n'écrit rien. */
+/* HTTP access. Every mutation goes through a job: the dashboard writes nothing. */
 import { CSRF, setSecrets } from "./state.js";
 
 async function json(url, options) {
@@ -6,8 +6,8 @@ async function json(url, options) {
   return { response, body: await response.json().catch(() => ({})) };
 }
 
-/* Resynchronise l'inventaire après un job. En cas d'échec l'état courant est
-   conservé : le log du job reste la source de vérité affichée. */
+/* Resync the inventory after a job. On failure the current state is kept: the
+   job log stays the displayed source of truth. */
 export async function refreshList() {
   try {
     const { body } = await json("api/list");

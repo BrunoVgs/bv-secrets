@@ -41,7 +41,7 @@ export function sortRows(list, which) {
 function toggle(keys, col, additive) {
   const i = keys.findIndex((k) => k.key === col);
   if (!additive) {
-    // colonne déjà seule et primaire : on inverse ; sinon elle devient l'unique critère
+    // column already sole and primary: flip it; otherwise it becomes the only key
     if (i === 0 && keys.length === 1) keys[0].dir = -keys[0].dir;
     else keys.splice(0, keys.length, { key: col, dir: 1 });
     return;
@@ -57,7 +57,7 @@ export function paintHead(selector, which) {
   $$(`${selector} .srt`).forEach((head) => {
     const i = keys.findIndex((k) => k.key === head.dataset.sort);
     head.classList.toggle("on", i >= 0);
-    // le rang n'a de sens qu'à partir de deux critères actifs
+    // rank only matters once two keys are active
     $(".ar", head).textContent = i < 0
       ? "↕"
       : (keys[i].dir === 1 ? "▲" : "▼") + (keys.length > 1 ? i + 1 : "");

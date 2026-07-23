@@ -1,10 +1,10 @@
-/* Actions sur les secrets : rotation et doctor. Toutes passent par le spool. */
+/* Secret actions: rotate and doctor. All go through the spool. */
 import { finishJob, startJob } from "./jobs.js";
 import { S } from "./state.js";
 import * as log from "./worklog.js";
 
-/* Le doctor imprime "✓ NOM détail (dernier set: …)" ; la pastille de chaque ligne
-   est mise à jour au fil du log plutôt qu'à la fin. */
+/* Doctor prints "✓ NAME detail (dernier set: …)"; each row's dot is updated as the
+   log streams rather than at the end. */
 const DOCTOR_LINE = /^([✓✗·])\s+(\S+)\s+(.*?)\s+\(dernier set: (.*)\)$/;
 
 function applyDoctorLine(line) {

@@ -1,19 +1,17 @@
-"""Connecteurs de localisation : lire ET écrire une valeur là où elle vit.
+"""Location connectors: read AND write a value where it lives.
 
-Le pivot du modèle : une localisation n'est plus une destination en écriture seule
-mais un connecteur symétrique — `read` extrait la valeur en place, `write` la
-remplace. C'est ce qui permet d'ADOPTER un fichier existant, d'atteindre UNE valeur
-dans un config structuré, et de détecter les dérives.
+Two-way, not write-only: `read` extracts the in-place value, `write` replaces it.
+This is what lets us adopt an existing file, target one value in a structured
+config, and detect drift.
 
-Écriture chirurgicale : seule la valeur ciblée est remplacée, le reste du fichier
-(commentaires, ordre, indentation) reste identique octet pour octet. Aucun parseur
-ne réécrit le fichier entier, donc aucune dépendance et aucune perte de forme.
+Surgical writes: only the targeted value changes; comments, order and indentation
+stay byte-for-byte identical. No parser rewrites the whole file.
 
-Adressage : ``scheme:cible#sélecteur``
-    envfile:/chemin/.env#CLE          une clé dans un fichier KEY=VALUE
-    regex:/chemin/fichier#<motif>     groupe 1 d'une expression — passe-partout
-    file:/chemin                      le fichier entier comme valeur unique
-    json:/chemin/config.json#a.b.c    lecture d'un chemin JSON (écriture : voir reg:)
+Addressing: ``scheme:target#selector``
+    envfile:/path/.env#KEY            one key in a KEY=VALUE file
+    regex:/path/file#<pattern>        group 1 of a pattern (catch-all)
+    file:/path                        the whole file as the value
+    json:/path/config.json#a.b.c      read a JSON path (write: use regex:)
 """
 import json
 import os
@@ -22,22 +20,20 @@ from pathlib import Path
 
 
 class LocationError(RuntimeError):
-    """Localisation mal formée, illisible ou non inscriptible."""
+    """Malformed, unreadable, or non-writable location."""
 
 
 def split(location: str):
-    """``scheme:cible#sélecteur`` -> (scheme, cible, sélecteur).
-
-    Le sélecteur est découpé sur le PREMIER ``#`` : un motif regex peut en contenir
-    d'autres ensuite sans être tronqué."""
+    """``scheme:target#selector`` -> (scheme, target, selector). Split on the FIRST
+    ``#`` so a regex pattern may contain more without being truncated."""
     scheme, _, rest = location.partition(":")
     target, _, selector = rest.partition("#")
     return scheme, target, selector
 
 
 def _atomic_write(path: Path, text: str):
-    """Écrit en préservant le mode existant du fichier (0600 s'il est nouveau) :
-    un config applicatif en 0644 ne doit pas être resserré par surprise."""
+    """Write, preserving the file's existing mode (0600 if new): a 0644 app config
+    must not be silently tightened."""
     mode = path.stat().st_mode & 0o777 if path.exists() else 0o600
     tmp = path.with_suffix(path.suffix + ".bvtmp")
     tmp.write_text(text)
@@ -45,9 +41,7 @@ def _atomic_write(path: Path, text: str):
     tmp.replace(path)
 
 
-# --------------------------------------------------------------------------- #
-# envfile : une clé dans un fichier KEY=VALUE
-# --------------------------------------------------------------------------- #
+# --- envfile: one key in a KEY=VALUE file ----------------------------------- #
 def _env_pattern(key: str):
     return re.compile(rf"^(\s*(?:export\s+)?{re.escape(key)}\s*=)(.*?)(\r?\n?)$")
 
@@ -81,7 +75,7 @@ def env_write(target: str, key: str, value: str):
 
 
 def env_keys(target: str):
-    """Liste les clés d'un fichier env — utilisé par `scan` pour aider à déclarer."""
+    """List a .env file's keys, used by `scan`."""
     path = Path(target)
     if not path.exists():
         raise LocationError(f"fichier absent: {target}")
@@ -97,9 +91,7 @@ def env_keys(target: str):
     return keys
 
 
-# --------------------------------------------------------------------------- #
-# regex : le groupe 1 d'un motif — passe-partout pour tout format textuel
-# --------------------------------------------------------------------------- #
+# --- regex: group 1 of a pattern; catch-all for any text format ------------- #
 def _regex_compile(pattern: str):
     try:
         rx = re.compile(pattern, re.MULTILINE)
@@ -130,9 +122,7 @@ def regex_write(target: str, pattern: str, value: str):
     _atomic_write(path, text[:start] + value + text[end:])
 
 
-# --------------------------------------------------------------------------- #
-# file : le fichier entier comme valeur
-# --------------------------------------------------------------------------- #
+# --- file: whole file as the value ------------------------------------------ #
 def file_read(target: str, _selector: str):
     path = Path(target)
     return path.read_text() if path.exists() else None
@@ -142,10 +132,7 @@ def file_write(target: str, _selector: str, value: str):
     _atomic_write(Path(target), value)
 
 
-# --------------------------------------------------------------------------- #
-# json : lecture d'un chemin pointé. L'écriture structurée arrive plus tard ;
-# en attendant, viser une valeur JSON précise se fait avec regex:.
-# --------------------------------------------------------------------------- #
+# --- json: read a dotted path. Structured write via regex: for now ---------- #
 def json_read(target: str, dotted: str):
     path = Path(target)
     if not path.exists():
@@ -189,7 +176,7 @@ def writable_schemes():
 
 
 def read_location(location: str):
-    """Valeur en place, ou None si absente. Lève si le schéma ne sait pas lire."""
+    """In-place value, or None if absent. Raises if the scheme can't read."""
     scheme, target, selector = split(location)
     reader = _READERS.get(scheme)
     if not reader:

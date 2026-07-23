@@ -1,8 +1,8 @@
-"""Boucle du worker : vide le spool alimenté par l'UI web read-only.
+"""Worker loop: drains the spool fed by the read-only web UI.
 
-Seul composant privilégié de bv-secrets (docker + store en écriture), il tourne
-sur l'hôte sous l'utilisateur `bv`, sans réseau entrant. Les sinks `linux:` sont
-refusés ici : l'élévation doas est interactive et reste réservée au CLI.
+The only privileged bv-secrets component (docker + store write), it runs on the
+host as `bv` with no inbound network. `linux:` sinks are refused here: doas
+elevation is interactive and stays CLI-only.
 """
 import json
 import sys
@@ -10,12 +10,14 @@ import time
 import traceback
 from pathlib import Path
 
+from .. import audit
 from ..config import SPOOL
 from ..engine import ConfigError, Engine, RotateAborted
 from .jobs import HANDLERS
 
 REQ, RES, DONE = SPOOL / "requests", SPOOL / "results", SPOOL / "done"
 POLL_SECONDS = 2.0
+DIGEST_SECONDS = 60.0             # periodic audit-digest rebuild
 SECRET_ACTIONS = {"rotate", "apply", "doctor"}
 FLUSH_INTERVAL = 0.3
 
@@ -25,8 +27,8 @@ def _has_linux(cfg, name):
 
 
 def write_result(jid, status, log, data):
-    """Écrit RES/<jid>.json de façon atomique. Appelé aussi PENDANT le job avec
-    status=running : l'UI lit ce fichier et affiche le log en direct."""
+    """Write RES/<jid>.json atomically. Also called DURING the job with
+    status=running: the UI reads this file and shows the log live."""
     RES.mkdir(parents=True, exist_ok=True)
     tmp = RES / f".{jid}.tmp"
     tmp.write_text(json.dumps({"id": jid, "status": status, "log": log,
@@ -35,7 +37,7 @@ def write_result(jid, status, log, data):
 
 
 def _make_logger(jid, log):
-    """Journalise et flushe sur disque au plus une fois par FLUSH_INTERVAL."""
+    """Log and flush to disk at most once per FLUSH_INTERVAL."""
     last = [0.0]
 
     def emit(msg=""):
@@ -51,7 +53,7 @@ def _make_logger(jid, log):
 
 
 def run_secret_action(job, action, emit):
-    """rotate / apply / doctor — passent tous par Engine."""
+    """rotate / apply / doctor — all go through Engine."""
     engine = Engine()
     only = job.get("only") or []
     unknown = [n for n in only if n not in engine.cfg]
@@ -64,7 +66,7 @@ def run_secret_action(job, action, emit):
     if not only:
         if action != "doctor":
             raise RuntimeError("aucune cible")
-        only = sorted(engine.cfg)          # doctor sans cible = tout vérifier
+        only = sorted(engine.cfg)          # doctor with no target = check all
     emit(f"# {action} {only}")
     if action == "rotate":
         engine.rotate(only, True, emit)
@@ -104,12 +106,25 @@ def process(job_path: Path):
         job_path.unlink(missing_ok=True)
 
 
+def rebuild_digest():
+    """Rebuild the audit digest for the dashboard. Best-effort: a failure here must
+    never block job processing."""
+    try:
+        audit.build_worker_digest()
+    except Exception:
+        traceback.print_exc()
+
+
 def main():
     for d in (REQ, RES, DONE):
         d.mkdir(parents=True, exist_ok=True)
-    sys.stderr.write(f"bvsecrets-worker: surveille {REQ}\n")
+    sys.stderr.write(f"bvsecrets-worker: watching {REQ}\n")
+    rebuild_digest()
+    next_digest = time.time() + DIGEST_SECONDS
     while True:
+        did_job = False
         for job_path in sorted(REQ.glob("*.json")):
+            did_job = True
             try:
                 process(job_path)
             except Exception:
@@ -118,6 +133,9 @@ def main():
                     job_path.rename(DONE / job_path.name)
                 except OSError:
                     pass
+        if did_job or time.time() >= next_digest:
+            rebuild_digest()                       # after a job, and on a timer
+            next_digest = time.time() + DIGEST_SECONDS
         time.sleep(POLL_SECONDS)
 
 

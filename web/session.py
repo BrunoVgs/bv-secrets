@@ -1,7 +1,7 @@
-"""Sessions et CSRF.
+"""Sessions and CSRF.
 
-Deuxième garde applicatif, en plus du portail admin assuré par Caddy. Les sessions
-vivent en mémoire du process : un redémarrage déconnecte, ce qui est voulu.
+Second app-level guard, on top of the Caddy admin gate. Sessions live in process
+memory: a restart logs everyone out, which is intended.
 """
 import os
 import secrets as pysecrets
@@ -61,7 +61,7 @@ def clear_session_cookie():
 
 
 def csrf_ok(cookie_token: str, header_token: str) -> bool:
-    """Double-submit : le cookie non-HttpOnly est relu par le JS et renvoyé en
-    en-tête ; une origine tierce ne peut pas lire le cookie pour le reproduire."""
+    """Double-submit: the non-HttpOnly cookie is read back by JS and sent as a
+    header; a third-party origin can't read the cookie to reproduce it."""
     return bool(cookie_token) and bool(header_token) \
         and pysecrets.compare_digest(cookie_token, header_token)

@@ -1,8 +1,6 @@
-"""Réécriture chirurgicale de secrets.conf.
-
-Seules les lignes `kind =` / `group =` de la section visée sont remplacées :
-commentaires, ordre et mise en forme du reste du fichier sont préservés. Aucune
-valeur de secret ne transite par ce module.
+"""Surgical rewrite of secrets.conf. Only the `kind =` / `group =` lines of the
+target section change; comments, order and layout elsewhere are preserved. No
+secret value passes through this module.
 """
 import re
 
@@ -12,7 +10,7 @@ from ..config import CONF
 def _section_bounds(lines, name):
     start = next((i for i, ln in enumerate(lines) if ln.strip() == f"[{name}]"), None)
     if start is None:
-        raise RuntimeError(f"section absente: {name}")
+        raise RuntimeError(f"section missing: {name}")
     end = len(lines)
     for i in range(start + 1, len(lines)):
         stripped = lines[i].strip()
@@ -23,7 +21,7 @@ def _section_bounds(lines, name):
 
 
 def rewrite_section(lines, name, kind, group, log):
-    """Remplace kind/group dans [name] ; ajoute la clé si elle est absente."""
+    """Replace kind/group in [name]; add the key if absent."""
     start, end = _section_bounds(lines, name)
     out = list(lines)
     for key, val in (("kind", kind), ("group", group)):
@@ -35,7 +33,7 @@ def rewrite_section(lines, name, kind, group, log):
             if not m:
                 continue
             if m.group(2) == val:
-                log(f"{name}: {key} déjà {val}")
+                log(f"{name}: {key} already {val}")
             else:
                 out[i] = f"{m.group(1)}{val}\n"
                 log(f"{name}: {key} {m.group(2)} -> {val}")
@@ -43,7 +41,7 @@ def rewrite_section(lines, name, kind, group, log):
         else:
             out.insert(start + 1, f"{key}   = {val}\n")
             end += 1
-            log(f"{name}: {key} = {val} (ajouté)")
+            log(f"{name}: {key} = {val} (added)")
     return out
 
 

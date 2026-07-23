@@ -1,6 +1,6 @@
-"""Worker du spool — exécution privilégiée des jobs déposés par l'UI web.
+"""Spool worker — privileged execution of jobs dropped by the web UI.
 
-Rien n'est importé ici : le service lance `-m bvsecrets.worker.loop`, et un import
-anticipé de `.loop` ferait charger le module deux fois (une comme sous-module du
-paquet, une comme __main__).
+Nothing is imported here: the service runs `-m bvsecrets.worker.loop`, and eagerly
+importing `.loop` would load the module twice (once as a package submodule, once as
+__main__).
 """

@@ -1,7 +1,7 @@
-"""Gabarits et assets statiques.
+"""Templates and static assets.
 
-Un gabarit reste du HTML valide : les parties dynamiques sont des marqueurs
-<!--BV:NOM--> substitués ici. Pas de .format(), le HTML contient des accolades.
+A template stays valid HTML: dynamic parts are <!--BV:NAME--> markers substituted
+here. No .format(), since the HTML contains braces.
 """
 import hashlib
 from pathlib import Path
@@ -17,9 +17,9 @@ def _asset_files():
     return sorted(p for p in STATIC.rglob("*") if p.suffix in ASSET_TYPES)
 
 
-# Empreinte du contenu de tous les assets. Elle est injectée comme SEGMENT d'URL
-# (static/<v>/js/boot.js) et non comme query : les imports ES relatifs héritent
-# ainsi de la version, donc un module importé ne peut pas rester en cache périmé.
+# Content hash of all assets, injected as a URL SEGMENT (static/<v>/js/boot.js),
+# not a query: relative ES imports inherit the version, so an imported module can't
+# stay stale in cache.
 ASSET_V = "v" + hashlib.sha256(
     b"".join(p.read_bytes() for p in _asset_files())).hexdigest()[:8]
 
@@ -37,10 +37,10 @@ def page(name, **marks):
 
 
 def asset(url_path):
-    """Résout `<version>/css/base.css` -> chemin sur disque, ou None si refusé.
+    """Resolve `<version>/css/base.css` -> disk path, or None if refused.
 
-    Le segment de version est purement cosmétique et ignoré ; seule compte la
-    partie sous static/, validée pour interdire toute traversée."""
+    The version segment is cosmetic and ignored; only the part under static/
+    matters, validated to forbid any traversal."""
     _, _, rel = url_path.partition("/")
     if not rel or ".." in rel.split("/"):
         return None

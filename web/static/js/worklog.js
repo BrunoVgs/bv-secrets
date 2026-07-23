@@ -1,4 +1,4 @@
-/* Console du worker : journal en direct des jobs, et verrouillage de l'UI. */
+/* Worker console: live job log and UI lock. */
 import { $, $$ } from "./dom.js";
 import { S } from "./state.js";
 
