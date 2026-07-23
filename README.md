@@ -5,9 +5,9 @@
 <h1 align="center">bv-secrets</h1>
 
 <p align="center">
-  A low-level manager that edits the files directly: secrets, permissions, accounts.<br>
-  One declarative source, one privileged worker, and an audit lens to see who reached
-  what, when, from where, and what changed.
+  Drop it on a fresh box and you already have password rotation, access control,<br>
+  account management and an audit log. Built into the server. No daemon, no database,
+  no dependencies.
 </p>
 
 <p align="center">
@@ -18,43 +18,55 @@
 
 ---
 
-## What it is
+## Why
 
-A low-level manager for a self-hosted box. It does not run a daemon that owns
-your infrastructure; it edits the actual files where secrets, permissions and
-accounts already live. Three things are administered here, and they turned out to
-be the same problem: a declarative source of truth, and something privileged that
-makes reality match it — plus one lens to observe all of it.
+Every time you set up a server you end up bolting the same stuff onto it: somewhere
+to keep passwords, some notion of who gets in, a backoffice for accounts, and if
+you are lucky a vague idea of who did what. Each one a service, a database, a
+dependency to keep alive.
 
-| Domain | Source of truth | Applied to |
+bv-secrets is the opposite bet. One thing you drop on the box, and you already have
+all of it: secret rotation, access control, account management and an audit log,
+wired straight into the server. Nothing to install past Python.
+
+Vault, Infisical and the rest are built for fleets: a networked daemon, a database,
+a cluster to babysit. On a single host that is more moving parts than the thing
+they protect. This stays small on purpose. It edits the files where secrets, access
+rules and accounts already live, and it is the one place that can tell you what
+happened to them.
+
+Three jobs, one shape every time: a file you own is the source of truth, and one
+privileged process makes the running system match it.
+
+| Job | Source of truth | Made real in |
 |---|---|---|
-| Secrets and rotation | `secrets.conf` | `.env` files, SQL users, Linux accounts, app commands |
-| Access | `access.conf` | Caddy gates, homepage tiles per role, console tiles |
-| Portal accounts | the auth service's database | roles, deletion, password reset |
-| Audit | logs that already exist | a read-only timeline — who reached what, when, what changed |
+| Secrets & rotation | `secrets.conf` | `.env` files, SQL users, Linux accounts, app commands |
+| Access | `access.conf` | Caddy gates, homepage tiles, console tiles |
+| Accounts | the auth service's own DB | roles, deletion, password reset |
+| Audit | logs the box already writes | one read-only timeline |
 
-The part that matters is that the loop is closed. A personal vault (Bitwarden,
-Dashlane) stores passwords for a human to read back. Here, when a database
-password is rotated, the SQL user is actually altered, the `.env` files are
-rewritten, and the affected containers are recreated so they pick up the new
-value. Without that last step, a "rotated" secret is just a new string in a file
-while the service keeps authenticating with the old one.
+## Rotation that actually rotates
 
-The same reasoning pushed accounts in. Running a second web backoffice next to
-this one, with its own session handling and its own database access, only added
-attack surface for something the worker could already do through the app's own
-console commands. So the backoffice went away and the accounts moved here.
+A password manager hands you a new string to copy. bv-secrets changes the string
+**and** everything using it: the SQL user gets `ALTER`ed, the `.env` files get
+rewritten, the affected containers get recreated so they pick up the new value.
+Skip that last step and you have a "rotated" secret while the service keeps logging
+in with the old one.
 
-Audit is the observing counterpart of all this: once the tool touches secrets,
-access and accounts, it is also the right place to *look* — but as a lens over
-logs that already exist, never a new collection or retention system.
+`rotate` is all or nothing. Every sink is applied and verified before the store is
+written; if one fails, the rest roll back. No half-rotated secret. The database
+root password goes last, so the earlier `ALTER USER` statements can still
+authenticate with the old one.
+
+Which containers to recreate is derived from the sinks, never declared by hand: a
+container only re-reads its `env_file` at creation, so anything fed by an `env:`
+sink gets recreated.
 
 ## Onboarding an app
 
-The central move: you install an application, it drops yet another `.env`, and you
-bring it under management in one command. `adopt` scans the file, picks out the
-secrets (hosts, ports, log levels are ignored), proposes a declaration, then writes
-it to `secrets.conf` and imports the values in place.
+Install something, it drops yet another `.env`, you bring it under management in
+one line. `adopt` reads the file, keeps the secrets, ignores the config (hosts,
+ports, log levels), and shows you the plan before writing anything.
 
 ```sh
 bv-secrets adopt /srv/grafana/.env --prefix GRAFANA_
@@ -64,301 +76,195 @@ From /srv/grafana/.env — 3 secret(s) detected:
   + GRAFANA_GF_SECURITY_ADMIN_PASSWORD password  app     <- GF_SECURITY_ADMIN_PASSWORD (21 c)
   + GRAFANA_GF_DATABASE_PASSWORD       hex       app     <- GF_DATABASE_PASSWORD (32 c)
   + GRAFANA_GF_AUTH_JWT_API_TOKEN      apikey    manual  <- GF_AUTH_JWT_API_TOKEN (39 c)
-  · ignored (config): GF_SERVER_HTTP_PORT, GF_SERVER_DOMAIN, GF_SECURITY_ADMIN_USER, GF_LOG_LEVEL
+  · ignored (config): GF_SERVER_HTTP_PORT, GF_SERVER_DOMAIN, GF_SECURITY_ADMIN_USER
 
 Re-run with --yes to declare these secrets and import their values.
 ```
 
-That run is a dry run; nothing is written until you add `--yes`. The kind is
-guessed (a hex value gives `hex`, a name containing `API` or `TOKEN` gives
-`apikey`, which is never rotated) and the default group is `app`, never `auto` —
-a third-party secret does not enter automatic rotation before someone has looked
-at it. Everything stays editable afterwards, from the dashboard or by hand in
-`secrets.conf`.
+Nothing is written without `--yes`. A name with `API` or `TOKEN` becomes an
+`apikey`, which is never generated (a random value there just breaks the app). New
+secrets land in `app`, never `auto`: a third-party secret does not enter automatic
+rotation before you have looked at it.
 
-Once adopted, the secret behaves like any other: `rotate` regenerates the value and
-writes it back into the app's `.env`, `status` watches for drift.
+Under the hood a location is a two-way connector, so bv-secrets reads a value where
+it lives as well as writes it. `status` re-reads everything and tells you what
+drifted outside the tool. Writes are surgical: only the targeted value changes,
+comments and formatting stay byte-for-byte.
 
-### Under the hood
-
-`adopt` is three smaller commands composed together, each usable on its own:
-
-```sh
-bv-secrets scan /srv/app/.env          # which keys could I manage?
-bv-secrets import --all                # pull in-place values into the store
-bv-secrets status                      # in sync, drifted, or missing?
-```
-
-A location is a two-way connector: bv-secrets can read a value where it lives as
-well as write it there. `status` re-reads every location and reports what changed
-outside the tool. Writes are surgical — only the targeted value changes, comments,
-ordering and indentation stay byte-for-byte identical.
-
-Location schemes:
-
-| Scheme | Target | reads | writes |
+| Scheme | Target | read | write |
 |---|---|:-:|:-:|
-| `envfile:/path#KEY` | one key in a `KEY=VALUE` file | ✓ | ✓ |
-| `regex:/path#<pattern>` | group 1 of a pattern, any format | ✓ | ✓ |
-| `file:/path` | the whole file as the value | ✓ | ✓ |
-| `json:/path#a.b.c` | a value at a JSON path | ✓ | — |
-| `mysql:user@container` | a SQL account password (`ALTER USER`) | — | ✓ |
-| `cmd:…` `linux:user` | app command · Linux account | — | ✓ |
-
-To write a value inside YAML/TOML/INI, `regex:` is the catch-all until dedicated
-resolvers exist (`api_password:\s*(\S+)`).
-
-## What it isn't
-
-Not a team vault, not a networked secret server (Vault, Infisical). No exposed
-daemon, no database, no cluster. One config file, a `0600` store, and a Python
-binary built on the standard library.
+| `envfile:/path#KEY` | one key in a `KEY=VALUE` file | yes | yes |
+| `regex:/path#<pattern>` | group 1 of a pattern, any format | yes | yes |
+| `file:/path` | the whole file as the value | yes | yes |
+| `json:/path#a.b.c` | a value at a JSON path | yes | no |
+| `mysql:user@container` | a SQL password (`ALTER USER`) | no | yes |
+| `cmd:…` / `linux:user` | app command / Linux account | no | yes |
 
 ## Security model
 
-This is the core of the project: privileges are asymmetric.
+The whole point: privileges are lopsided.
 
-| Component | Where | Privileges |
+| Component | Where | Can do |
 |---|---|---|
 | CLI | host, interactive | store rw, `doas` for Linux accounts |
-| Worker | host, system service | docker + store rw, no inbound network |
-| Web dashboard | container | store read-only, no docker access |
+| Worker | host, service | docker + store rw, no inbound network |
+| Dashboard | container | read the store, nothing else |
 
-The dashboard performs no privileged action itself — not a rotation, not an access
-change, not an account edit. It drops a job descriptor in a spool directory; the
-worker picks it up, runs it, and writes back a log containing no values. That is
-what makes it safe to put the UI behind a reverse proxy without granting it any
-privilege: compromising the web container gives neither docker, nor write access to
-the store, nor the database.
+The dashboard never does anything privileged. It drops a job in a spool; the worker
+runs it and writes back a log with no values. So the UI can sit behind a proxy and
+a full compromise of the web container still gets you nothing: no docker, no store
+writes, no database.
 
-Values are never logged. The only commands that print one are `get` and `open`,
-and only when asked. `audit` fits the same asymmetry: it only ever prints
-metadata, and the two root-owned log sources (Caddy, syslog) are read
-interactively through `doas` from the CLI, never granted to the worker or the
-dashboard as a standing privilege.
+Values are never logged. `get` and `open` are the only commands that print one, and
+only when you ask.
 
-## Two orthogonal axes
+## Audit
 
-The distinction that holds the model together, not to be collapsed back:
+The tool already touches secrets, access and accounts, so it is the right place to
+watch them. `audit` is a read-only lens over logs the box already writes. It stores
+nothing new and keeps no history of its own.
 
-- `kind` — the FORMAT of the value, what it *is*:
-  `password`, `hex`, `b64`, `passphrase`, `userpass`, `opaque`, `computed`, `apikey`
-- `group` — the rotation POLICY, *when* it gets regenerated:
-  `auto`, `app`, `careful`, `manual`
+| Source | From | Tells you |
+|---|---|---|
+| Access | Caddy access log | who reached which service, allowed or denied |
+| Trail | worker spool | rotations, access changes, account edits |
+| Rotation | `meta.env` | when each secret was last set |
+| Host | syslog | SSH logins and `doas` elevations |
 
-An `apikey` is issued by a third-party application. It is never generated: writing
-a random string there would produce a key the application rejects, and the service
-goes down. A name containing `API` or `TOKEN` forces that kind, and switching it to
-a generatable kind is refused in three independent places — the UI, the API and
-the worker.
+```sh
+bv-secrets audit --since 24h                 # everything, last 24h
+bv-secrets audit --source access --denied    # only refused accesses
+bv-secrets audit --ip 10.8.0.5 --json        # one client, machine-readable
+```
+
+The worker builds the timeline with privileges it already has: it reads the Caddy
+log (root, `0600`) through `docker exec`, and the host syslog directly because it
+runs as a wheel user. No `doas`, no new privilege, no root log mounted into the web
+container. The dashboard just reads the digest, refreshed every minute.
+
+Two honest limits. Accesses are keyed by IP and service, not by portal user (Caddy
+logs the client request; add a `log_append` of `X-Auth-User` if you want names).
+And no secret value ever appears, query strings included.
+
+## Access & accounts
+
+`access.conf` answers one question, "which role reaches which service", and
+everything downstream is generated from it: the Caddy gates, the homepage tiles per
+role, the console tiles. Roles are hierarchical (`guest < trusted < admin`) and
+admin passes every gate. Editing a generated file by hand is always wrong; the next
+render overwrites it. The matrix and its renderer live with the deployment
+(`$BV_COMPOSE_DIR/access/`), not in this repo.
+
+Accounts work the same way without duplicating anything: the dashboard changes
+roles and deletes users by running the auth app's own console commands through the
+worker. No second copy of the user schema, no DB credential in the web container,
+passwords never read. The last-admin guard stays in the app, the only place that
+can enforce it right. Leave `BV_AUTH_SERVICE` empty and the feature is simply off.
 
 ## Getting started
 
 ```sh
-git clone https://github.com/<account>/bv-secrets.git
+git clone https://github.com/BrunoVgs/bv-secrets.git
 cd bv-secrets
 cp secrets.conf.example secrets.conf     # describe your own secrets
 
-export BV_SECRETS_DIR=/opt/bv-secrets    # store, renders, encrypted mirror
+export BV_SECRETS_DIR=/opt/bv-secrets
 bin/bv-secrets list                      # inventory, no values
 bin/bv-secrets plan                      # what a rotation would do
 bin/bv-secrets rotate --yes              # regenerate and apply the auto group
-bin/bv-secrets doctor                    # check that each value actually WORKS
+bin/bv-secrets doctor                    # does each value actually WORK?
 ```
 
-`secrets.conf` is not versioned: it describes the infrastructure (services, SQL
+`secrets.conf` is never versioned: it maps your infrastructure (services, SQL
 users, probe commands). Only the template is.
 
-### Dashboard
+Dashboard:
 
 ```sh
 docker build -t bv-secrets-web .
 docker run -d --name bv-secrets-web --read-only -u 1000:1000 -p 8000:8000 \
-  -e BV_DASH_PASSWORD='<application password>' \
+  -e BV_DASH_PASSWORD='<app password>' \
   -v "$PWD/secrets.conf:/app/secrets.conf:ro" \
   -v /opt/bv-secrets:/opt/bv-secrets:ro \
   -v /opt/bv-secrets/spool:/spool:rw \
   bv-secrets-web
 ```
 
-The worker and the container must share the same `secrets.conf` file: the worker
-rewrites it when a kind changes from the UI. Mount it, never rely on the copy baked
-into the image.
+Mount the same `secrets.conf` the worker uses (it rewrites the file when a format
+changes from the UI); never rely on the copy baked into the image. An example
+compose service and the worker's OpenRC unit are in [`docs/`](docs/) and
+[`deploy/`](deploy/).
 
-An example compose service and the worker's OpenRC unit are in [`docs/`](docs/)
-and [`deploy/`](deploy/).
+## Two axes, don't mix them
 
-## Access
+- `kind` is the FORMAT: `password`, `hex`, `b64`, `passphrase`, `userpass`,
+  `opaque`, `computed`, `apikey`.
+- `group` is the rotation POLICY: `auto`, `app`, `careful`, `manual`.
 
-`access.conf` answers one question — which role reaches which service — and every
-consumer is generated from it: the Caddy gate snippets, the homepage tiles for each
-role, the console tile visibility. Editing a generated file by hand is always
-wrong; the next render overwrites it.
-
-Roles are hierarchical (`guest < trusted < admin`), and admin passes every gate
-whether it is listed or not. A service can drive up to three surfaces, and an empty
-key means that surface simply does not exist for it. Unions are computed rather
-than declared: the console's static gate is the union of the roles of the tiles it
-contains.
-
-The matrix and its renderer live with the deployment, not in this repository —
-`$BV_COMPOSE_DIR/access/`, pointed at by `BV_ACCESS_CONF`. bv-secrets drives them:
-the dashboard posts a change, the worker calls the renderer, then recreates the
-proxy and restarts whatever consumes the matrix.
-
-```sh
-access/render-access.py show            # resolved matrix
-access/render-access.py caddy --check   # is the Caddy region up to date?
-```
-
-The renderer only writes files. Reloading Caddy and restarting homepage are separate
-steps the worker takes deliberately, so a render is never a deployment by accident.
-The proxy is recreated rather than restarted: its configuration is mounted file by
-file, and a plain restart would re-read the old one.
-
-## Accounts
-
-With `BV_AUTH_SERVICE` set, the dashboard lists the auth portal's accounts, changes
-their roles and deletes them. It does this by running the application's own console
-commands through the worker, so there is no second piece of code that knows the user
-schema and no database credential in the web container. Passwords are never read.
-The last-admin guard lives in the Symfony command, which is the only place that can
-enforce it correctly.
-
-Left empty, `BV_AUTH_SERVICE` disables the feature rather than pointing at some
-arbitrary service.
-
-## Audit
-
-`audit` is a read-only lens, not a monitoring product. It reads logs the box
-already writes, normalises them into one timeline, and answers a single question:
-who reached what, when, from where, and what changed. It collects nothing new and
-keeps no history of its own.
-
-| Source | Where | Yields |
-|---|---|---|
-| Access | Caddy JSON access log | HTTP requests: IP, service, allowed / denied (403) |
-| Trail | worker spool (`done/`, `results/`) | privileged actions: rotate, access change, account edit |
-| Rotation dates | `meta.env` | when each secret was last set |
-| Host | syslog (`sshd`, `doas`) | SSH logins and privilege elevations |
-
-```sh
-bv-secrets audit --since 24h            # everything, last 24h
-bv-secrets audit --source access --denied   # only refused HTTP accesses (403)
-bv-secrets audit --source trail --since 7d   # recent rotations, grants, account edits
-bv-secrets audit --ip 10.8.0.5 --json        # one client, machine-readable
-```
-
-**No standing privilege.** The Caddy log is `root:0600` and the syslog is
-root-owned; reading them is an interactive, `doas`-elevated act reserved to the
-CLI on the host — exactly like a `linux:` sink. Nothing gains a `nopass` rule and
-no root log is mounted into a container to make a dashboard "live".
-
-That boundary shapes where each thing shows up. The worker builds a digest of the
-parts it can read unprivileged (trail + rotation dates) into `$BV_SECRETS_DIR/audit/`,
-which the read-only dashboard renders continuously. The access and host slices are
-written to the same directory by the last CLI `audit` run and shown with an
-`as of` marker, so the dashboard is honest about their freshness rather than
-pretending to a liveness it cannot have safely. No value ever appears in either
-face; URLs are logged without their query string.
-
-Account *changes* surface through the trail (`source: trail`); the current account
-roster stays in the **Accounts** view. One deliberate limitation: Caddy logs the
-client request, so accesses are attributed by IP and service, not by portal user —
-attaching the authenticated user needs an explicit `log_append` of `X-Auth-User`
-in the Caddy `(logging)` snippet, not an implicit promise.
+An `apikey` is issued by someone else's app, so it is never generated; the name
+rule (`API`/`TOKEN`) makes turning it into a generatable kind fail in three
+independent places: the UI, the API and the worker.
 
 ## Commands
 
 | Command | Effect |
 |---|---|
 | `list` | inventory: name, kind, group, presence, services |
-| `check` | config consistency, values present, `0600` permissions |
-| `plan` | dry run of a rotation, no value touched |
+| `check` | config consistency, values present, `0600` perms |
+| `plan` | dry run of a rotation |
 | `rotate [--only N] --yes` | regenerate and apply everywhere, with rollback |
 | `apply [--only N] --yes` | push current values without regenerating |
-| `doctor [--only N]` | check each value against the real application |
-| `render` | rewrite the `rendered/<service>.env` files |
-| `adopt <file> [--prefix P_]` | onboard an app: detect its secrets, declare and import |
-| `scan <file>` | list the keys of an existing `.env` to help declare them |
-| `import [NAME\|--all]` | adopt values already in place: read them where they live → store |
-| `status` | compare the store to in-place values, report drift |
-| `get` / `set` / `gen` | read, write, generate a value |
-| `add` | register a new secret and its targets |
-| `seal` / `open` | encrypted mirror of the store, for off-machine backup |
-| `audit [--source --since --denied --ip --service --json]` | timeline: who reached what, when, from where, what changed |
-| `leaks` | look for managed values sitting in cleartext elsewhere |
-| `verify-render` | check that `render()` reproduces the current renders |
-
-## What rotation actually does
-
-`rotate` writes to the store only after every live sink has been applied and
-verified. If one fails, the previous ones are put back to their earlier value and
-the store is left untouched. There is no half-rotated secret.
-
-Order matters: the database root password is applied last, so that the preceding
-`ALTER USER` statements can still authenticate with the old one.
-
-Services to recreate are derived from the sinks, never declared by hand: a
-container only re-reads its `env_file` at creation time, so any service targeted by
-an `env:` sink gets recreated. `computed` secrets that reference a rotated value
-also pull their own targets into the recreation set.
+| `doctor [--only N]` | test each value against the real app |
+| `adopt <file> [--prefix P_]` | onboard an app: detect, declare, import |
+| `scan` / `import` / `status` | declare, pull in-place values, report drift |
+| `get` / `set` / `gen` / `add` | read, write, generate, register |
+| `render` / `verify-render` | write / check `rendered/<service>.env` |
+| `seal` / `open` | encrypted store mirror for off-machine backup |
+| `audit [--source --since --denied --ip --json]` | who reached what, when, what changed |
+| `leaks` | find managed values sitting in cleartext elsewhere |
 
 ## Configuration
 
-Every path has a default and can be overridden through the environment:
+Every path has a default and takes an env override.
 
 | Variable | Default | Role |
 |---|---|---|
-| `BV_SECRETS_DIR` | `/opt/bv-secrets` | store, renders, encrypted mirror |
+| `BV_SECRETS_DIR` | `/opt/bv-secrets` | store, renders, mirror, audit digest |
 | `BV_SECRETS_CONF` | `<project>/secrets.conf` | declarative source |
-| `BV_SPOOL` | `$BV_SECRETS_DIR/spool` | web → worker job queue |
-| `BV_ACCESS_CONF` | `<compose>/access/access.conf` | service × role matrix |
-| `BV_COMPOSE_DIR` | project's parent directory | docker compose root |
-| `BV_CADDY_LOG_DIR` | `/var/log/caddy` | Caddy access logs read by `audit` |
-| `BV_HOST_SYSLOG` | `/var/log/messages` | host syslog (ssh/doas) read by `audit` |
-| `BV_DASH_PASSWORD` | — | dashboard application password |
-| `BV_PORT` | `8000` | dashboard listening port |
+| `BV_SPOOL` | `$BV_SECRETS_DIR/spool` | web to worker job queue |
+| `BV_ACCESS_CONF` | `<compose>/access/access.conf` | service x role matrix |
+| `BV_COMPOSE_DIR` | project's parent | docker compose root |
+| `BV_CADDY_LOG_DIR` | `/var/log/caddy` | Caddy access log for `audit` |
+| `BV_HOST_SYSLOG` | `/var/log/messages` | host syslog for `audit` |
+| `BV_DASH_PASSWORD` | none | dashboard password |
+| `BV_PORT` | `8000` | dashboard port |
 
-The worker also drives services whose names differ between installations. Left
-empty, the matching features are disabled rather than acting on an arbitrary
-service:
-
-| Variable | Role |
-|---|---|
-| `BV_PROXY_SERVICE` | reverse proxy recreated after an access change |
-| `BV_ACCESS_RELOAD_SERVICES` | services to restart afterwards, comma-separated |
-| `BV_AUTH_SERVICE` | service hosting the account management console |
-
-On an OpenRC system these live in `/etc/conf.d/bvsecrets-worker` — see
+Deployment-specific service names go in `/etc/conf.d/bvsecrets-worker`
+(`BV_PROXY_SERVICE`, `BV_ACCESS_RELOAD_SERVICES`, `BV_AUTH_SERVICE`,
+`BV_CADDY_CONTAINER`). Left empty, the matching feature is off rather than aimed at
+a random service, so the repo stays generic and real names are never versioned. See
 [`deploy/bvsecrets-worker.confd.example`](deploy/bvsecrets-worker.confd.example).
-That keeps the repository generic; real service names are never versioned.
 
 ## Layout
 
 ```
-bvsecrets/          engine shared by the three faces
-  config.py           paths and domain vocabulary
-  envfile.py          atomic .env read/write
-  locations.py        two-way location connectors
-  conffile.py         appending sections to secrets.conf
-  adopt.py            secret detection in an existing config file
+bvsecrets/          engine shared by all three faces
   engine.py           resolution, render, rotation, doctor
-  audit.py            audit lens: normalised events from existing logs
-  cli.py              command-line interface
-  worker/             privileged spool executor (also builds the audit digest)
-web/                dashboard
-  server.py           HTTP transport, sessions, CSRF
-  routes.py           API entry points
-  audit_read.py       read-only merge of the audit digests
-  static/css|js/      one sheet per layer, ES modules, no build
-deploy/             worker OpenRC unit
-docs/               example compose service
+  locations.py        two-way value connectors
+  adopt.py            secret detection in a config file
+  audit.py            audit lens over existing logs
+  cli.py              command line
+  worker/             privileged spool executor + audit digest
+web/                dashboard (read-only)
+  server.py           HTTP, sessions, CSRF
+  routes.py           API
+  static/             one CSS sheet per layer, ES modules, no build
 ```
 
-No dependencies: Python standard library on the server, native ES modules in the
-browser, no build step.
+Python standard library on the server, native ES modules in the browser, no build
+step, nothing to install.
 
 ## Licence
 
-MIT — see [LICENSE](LICENSE).
+MIT, see [LICENSE](LICENSE).
+</content>
