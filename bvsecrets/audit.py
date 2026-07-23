@@ -131,7 +131,6 @@ def caddy_events(since: float = 0.0):
                 continue
             service = host.split(".", 1)[0] or host      # subdomain, or host if none
             status = int(o.get("status") or 0)
-            loc = o.get("resp_headers", {}).get("Location") or []
             user = (req.get("headers", {}).get("X-Auth-User") or [""])[0]
             actor = user or _client_ip(req)
 
@@ -139,17 +138,17 @@ def caddy_events(since: float = 0.0):
                 outcome, detail = "deny", f"refusé sur {service} (rôle insuffisant)"
             elif status == 401:
                 outcome, detail = "deny", f"connexion requise — {service}"
-            elif status in (302, 303) and any("login" in x.lower() for x in loc):
-                outcome, detail = "login", f"invité à se connecter — {service}"
+            elif status in (301, 302, 303, 307, 308):
+                continue                         # redirects (incl. login bounces): not audit events
             elif 500 <= status < 600:
                 outcome, detail = "info", f"erreur serveur — {service}"
             elif status == 404:
                 outcome, detail = "info", f"page introuvable — {service}"
-            elif 200 <= status < 400:
+            elif 200 <= status < 400:            # 2xx and 304 (cached)
                 outcome, detail = "allow", f"a consulté {service}"
             else:
                 continue
-            if outcome in ("deny", "login") and roles.get(service):
+            if outcome == "deny" and roles.get(service):
                 detail += f" [rôles requis : {'+'.join(roles[service])}]"
             out.append(event(ts, "access", actor, service, outcome, detail))
     return out
@@ -329,16 +328,36 @@ def timeline(events, service=None, ip=None, user=None, denied=False, limit=200):
     return out[:limit]
 
 
+ACCESS_KEEP = 150       # cap on non-denial accesses after dedup, so they can't drown the rest
+
+
 def build_worker_digest(days: int = 30):
-    """Full digest written by the worker: access + host + trail + rotations.
-    Each source is isolated so one failure doesn't drop the rest. Never a value."""
+    """Balanced digest for the dashboard. The Caddy log is huge and repetitive, so
+    access events are collapsed to one row per (client, service, outcome) and capped;
+    every denial, change, login and rotation is kept. The CLI `audit` stays raw."""
     since = time.time() - days * 86400
     events = []
-    for fn in (trail_events, rotdate_events, caddy_events, host_events):
+    for fn in (trail_events, rotdate_events, host_events):   # low volume: keep all
         try:
             events += fn(since)
         except Exception:
             pass
+    try:
+        gated = set(_service_roles())             # services you actually put behind the matrix
+        access = sorted(caddy_events(since), key=lambda e: e["ts"], reverse=True)
+        seen, uniq = set(), []
+        for e in access:                          # keep the most recent of each triple
+            key = (e["actor"], e["target"], e["outcome"])
+            if key not in seen:
+                seen.add(key)
+                uniq.append(e)
+        denies = [e for e in uniq if e["outcome"] == "deny"]
+        # allows/errors only for gated services: drops public-homepage bot crawl. With no
+        # matrix, gating is unknown so everything is kept (just deduped).
+        rest = [e for e in uniq if e["outcome"] != "deny" and (not gated or e["target"] in gated)]
+        events += denies + rest[:ACCESS_KEEP]
+    except Exception:
+        pass
     events.sort(key=lambda e: e["ts"], reverse=True)
     AUDIT_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
     tmp = WORKER_DIGEST.with_suffix(".tmp")
