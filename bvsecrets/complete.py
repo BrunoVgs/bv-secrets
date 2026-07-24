@@ -52,7 +52,7 @@ def candidates(parser, words, cword):
     sp = subs.get(sub)
     if cur.startswith("-") and sp is not None:
         return _options(sp)
-    if sub in ("get", "gen", "import"):
+    if sub in ("get", "gen", "import", "set"):
         return _secret_names()
     return []
 

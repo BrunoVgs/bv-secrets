@@ -13,8 +13,27 @@ from .engine import ConfigError, Engine, RotateAborted
 from .envfile import parse_env, write_env
 
 
+# Coloration du flux moteur : le glyphe de tete porte le sens (etat d'un secret,
+# succes, echec), les lignes de detail indentees passent en attenue.
+_LINE_STYLE = {
+    "✓": ui.GREEN, "=": ui.GREEN,
+    "✗": ui.RED, "!": ui.RED,
+    "~": ui.YELLOW,
+    "+": ui.CYAN, "•": ui.CYAN,
+    "-": ui.DIM, "·": ui.DIM, "?": ui.DIM,
+}
+
+
 def _log(msg=""):
-    print(msg)
+    s = msg.lstrip()
+    style = _LINE_STYLE.get(s[:1])
+    if style and (len(s) == 1 or s[1] == " "):
+        indent = msg[:len(msg) - len(s)]
+        print(f"{indent}{ui.paint(s[:1], style)}{s[1:]}")
+    elif msg.startswith("    ") and s:
+        print(ui.paint(msg, ui.DIM))
+    else:
+        print(msg)
 
 
 def _report(problems, clean_msg):
@@ -225,13 +244,46 @@ def cmd_audit(a, e):
     return 0
 
 
+_FAMILIES = [
+    ("inventaire & santé", ["list", "status", "check", "doctor", "audit", "leaks"]),
+    ("rotation & application", ["plan", "rotate", "apply", "render", "verify-render"]),
+    ("valeurs", ["get", "set", "gen", "add"]),
+    ("adoption", ["scan", "import", "adopt"]),
+    ("store chiffré", ["seal", "open"]),
+]
+
+_EXAMPLES = [
+    ("bv-secrets status", "store vs déployé : synchro / dérive / non déployé"),
+    ("bv-secrets rotate --only APP_SECRET --yes", "régénère un secret et le propage"),
+    ("bv-secrets adopt /srv/app/.env --prefix APP_", "onboarde les secrets d'une app"),
+    ("bv-secrets audit --since 24h --denied", "accès refusés des dernières 24h"),
+]
+
+
+def _epilog(helps):
+    width = max(len(n) for n in helps) + 2
+    out = [ui.heading("Commandes")]
+    for title, names in _FAMILIES:
+        out.append("  " + ui.paint(title, ui.BOLD))
+        out += [f"    {n.ljust(width)}{ui.paint(helps[n], ui.DIM)}" for n in names]
+    out += ["", ui.heading("Exemples")]
+    for cmd, what in _EXAMPLES:
+        out.append(f"  {ui.paint(cmd, ui.CYAN)}\n      {ui.paint(what, ui.DIM)}")
+    out += ["", ui.paint("Détail d'une commande : bv-secrets <commande> -h   ·   "
+                         "complétion : source completions/bv-secrets.bash", ui.DIM)]
+    return "\n".join(out)
+
+
 def build_parser():
     ap = argparse.ArgumentParser(
-        prog="bv-secrets", description="gestionnaire de secrets et de rotation côté serveur")
-    sub = ap.add_subparsers(dest="cmd", required=True)
+        prog="bv-secrets", formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="Gestionnaire de secrets et de rotation, côté serveur. Zéro dépendance.")
+    sub = ap.add_subparsers(dest="cmd", metavar="<commande>")
+    helps = {}
 
     def add(name, help_, func, *args):
-        sp = sub.add_parser(name, help=help_)
+        helps[name] = help_
+        sp = sub.add_parser(name, description=help_)      # help_ visible via `<cmd> -h`
         for flags, kwargs in args:
             sp.add_argument(*flags, **kwargs)
         sp.set_defaults(func=func)
@@ -277,6 +329,7 @@ def build_parser():
         (("--denied",), {"action": "store_true"}), (("--limit",), {"type": int, "default": 200}),
         (("--json",), {"action": "store_true"}))
     add("leaks", "cherche des valeurs gérées présentes en clair dans le repo", cmd_leaks)
+    ap.epilog = _epilog(helps)
     return ap
 
 
@@ -286,7 +339,11 @@ def main():
         from . import complete
         complete.run(argv[1:])
         return
-    args = build_parser().parse_args()
+    parser = build_parser()
+    args = parser.parse_args()
+    if not hasattr(args, "func"):        # aucune commande : aide au lieu d'une erreur
+        parser.print_help()
+        return
     try:
         sys.exit(args.func(args, Engine()) or 0)
     except (ConfigError, RotateAborted) as e:

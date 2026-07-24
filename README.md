@@ -127,21 +127,48 @@ Values are never logged. `get` and `open` are the only commands that print one.
 ## Architecture
 
 ```
-  CLI  bv-secrets ────────────┐        Dashboard (read-only, container)
-   ui.py       colour/tables   │             │ drops jobs
-   complete.py bash/zsh        │             ▼
-        │                      │          spool ──► Worker (host, privileged)
-        ▼                      │                       docker + store rw
-      engine.py ◄──────────────┴──────────────────────┘
-   resolve · render · rotate · apply · status · doctor · import
-        │
-   ┌────┴──────────────┬───────────────────────────┐
-   ▼                   ▼                           ▼
- config           secrets.conf                locations/  (read+write, surgical)
- bv-secrets.ini   + store (values)            envfile regex file json yaml ini toml
- (env override)                               + write-only sinks: env mysql linux cmd
+  you, at a shell            ┌──────────────────────────────────────────────┐
+       │                     │  DASHBOARD   container, unprivileged          │
+       │                     │  read-only view + a form that queues jobs     │
+       ▼                     └───────────────────────┬──────────────────────┘
+ ┌────────────────────┐                              │  writes a job file
+ │ CLI  bin/bv-secrets │                             ▼
+ │  ui.py     colour   │                       ┌───────────┐
+ │  complete  bash/zsh │                       │  spool/   │   filesystem queue
+ └─────────┬──────────┘                        └─────┬─────┘
+           │  in-process                              │  drains
+           │                                          ▼
+           │                            ┌──────────────────────────┐
+           │                            │ WORKER   host daemon      │
+           │                            │ the only privileged part  │
+           │                            │ docker + store write      │
+           │                            └────────────┬─────────────┘
+           ▼                                          ▼
+    ╔══════════════════════════════════════════════════════════════════╗
+    ║                            engine.py                               ║
+    ║   resolve → render → plan → rotate → apply → status → doctor       ║
+    ╚═════╤══════════════════════╤═══════════════════════════╤══════════╝
+          │ reads                │ reads / writes            │ reads / writes
+          ▼                      ▼                           ▼
+ ┌─────────────────┐  ┌────────────────────┐  ┌──────────────────────────────┐
+ │ CONFIG          │  │ DEFINITIONS         │  │ CONNECTORS   locations/       │
+ │ bv-secrets.ini  │  │ secrets.conf        │  │ two-way, surgical, zero-dep   │
+ │ env>file>default│  │ + store (values)    │  │                               │
+ │                 │  │                     │  │ read+write  envfile regex     │
+ │ paths, roles,   │  │ kind · group ·      │  │             file json yaml    │
+ │ service names   │  │ sinks · probe       │  │             ini toml          │
+ │                 │  │                     │  │ write-only  env mysql linux   │
+ │                 │  │                     │  │             cmd               │
+ └─────────────────┘  └────────────────────┘  └───────────────┬──────────────┘
+                                                               │ apply / import
+                                                               ▼
+                                      the real system: .env & config files,
+                                      SQL & Linux passwords, containers
 
- audit.py  read-only lens over existing logs ──► audit/digest.json
+ ── AUDIT ──────────────────────────────────────────────────────────────────
+   audit.py   read-only lens, stores nothing new
+   caddy access log · host syslog · worker spool · meta.env
+        └─► audit/digest.json  (rebuilt every minute)  ─►  dashboard timeline
 ```
 
 ## Configuration
