@@ -1,0 +1,13 @@
+#!/bin/sh
+# bv-secrets : bloque un commit qui embarque une valeur gérée en clair.
+#
+# Installer dans le dépôt à protéger :
+#     cp deploy/git-hooks/pre-commit .git/hooks/pre-commit
+#     chmod +x .git/hooks/pre-commit
+# ou, pour tous les dépôts :
+#     git config --global core.hooksPath ~/.git-hooks   (puis y déposer ce fichier)
+#
+# Nécessite `bv-secrets` dans le PATH. Sort non-zéro (commit refusé) si une valeur
+# du store apparaît en clair dans les fichiers stagés.
+command -v bv-secrets >/dev/null 2>&1 || exit 0   # pas d'outil = pas de garde, on ne bloque pas
+exec bv-secrets leaks --staged

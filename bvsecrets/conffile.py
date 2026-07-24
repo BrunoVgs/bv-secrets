@@ -7,12 +7,14 @@ re-read.
 from .config import CONF
 
 
-def render_section(name, kind, group, sinks, length=0, note=""):
+def render_section(name, kind, group, sinks, length=0, note="", validate=""):
     block = [f"[{name}]", f"kind  = {kind}", f"group = {group}"]
     if length:
         block.append(f"length = {length}")
     block.append("sinks =")
     block += [f"    {s}" for s in sinks]
+    if validate:
+        block.append(f"validate = {validate}")
     if note:
         block.append(f"note  = {note}")
     return "\n".join(block)

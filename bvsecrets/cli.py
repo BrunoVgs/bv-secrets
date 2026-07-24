@@ -2,11 +2,12 @@
 import argparse
 import datetime
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
 
-from . import adopt, audit, conffile, ui
+from . import adopt, audit, conffile, ui, validate
 from .config import (CONF, COMPOSE_DIR, GEN_KINDS, KEYFILE, LOCAL, MASTER, MIRROR,
                      RENDER_DIR, SECRETS_DIR, looks_like_apikey)
 from .engine import ConfigError, Engine, RotateAborted
@@ -94,12 +95,27 @@ def cmd_get(a, e):
 
 
 def cmd_set(a, e):
+    c = e.cfg.get(a.key)
+    if c and c["validate"]:
+        err = validate.check(c["validate"], a.value)
+        if err:
+            raise ConfigError(f"{a.key}: {err}")
     target = LOCAL if a.local else MASTER
     data = parse_env(target)
     data[a.key] = a.value
     write_env(target, data)
     Engine.touch_meta([a.key])
     print(f"set {a.key} dans {target.name} ; lancer `bv-secrets apply` pour propager.")
+
+
+def cmd_run(a, e):
+    """Exécute une commande avec les secrets en variables d'env, rien sur disque."""
+    cmd = a.cmd[1:] if a.cmd and a.cmd[0] == "--" else a.cmd
+    if not cmd:
+        raise ConfigError("commande manquante : bv-secrets run [--svc S] -- <cmd> ...")
+    services = [s.strip() for s in a.svc.split(",") if s.strip()] if a.svc else None
+    env = {**os.environ, **e.env_for(services)}
+    return subprocess.run(cmd, env=env).returncode
 
 
 def cmd_gen(a, e):
@@ -143,7 +159,7 @@ def cmd_add(a, e):
         raise ConfigError("donner au moins un sink (env:svc#VAR, file:/p, linux:user, "
                           "mysql:u@ctr, cmd:..., envfile:/p#K, json/yaml/ini/toml:/p#a.b.c)")
     conffile.append_sections(
-        [conffile.render_section(a.name, a.kind, a.group, a.sink, a.length, a.note)])
+        [conffile.render_section(a.name, a.kind, a.group, a.sink, a.length, a.note, a.validate)])
     print(f"ajouté [{a.name}] à {CONF.name}. `bv-secrets gen {a.name}` puis `apply`.")
 
 
@@ -198,9 +214,7 @@ def cmd_open(a, e):
     sys.stdout.write(r.stdout.decode())
 
 
-def cmd_leaks(a, e):
-    """Scan the repo for managed values sitting in cleartext elsewhere."""
-    values = {k: v for k, v in e.data.items() if len(v) >= 6}
+def _leaks_tree(values):
     hits = []
     for path in COMPOSE_DIR.rglob("*"):
         if not path.is_file() or RENDER_DIR in path.parents or path.parent == SECRETS_DIR:
@@ -210,7 +224,30 @@ def cmd_leaks(a, e):
         except OSError:
             continue
         hits += [f"LEAK  {path}  contient la valeur de {k}" for k, v in values.items() if v in text]
-    return _report(hits, "\nClean — aucune valeur gérée trouvée en clair ailleurs.")
+    return hits
+
+
+def _leaks_staged(values):
+    """Scanne le contenu STAGÉ (index git), pas l'arbre : ce qui part au commit."""
+    listing = subprocess.run(["git", "diff", "--cached", "--name-only", "--diff-filter=ACM"],
+                             capture_output=True, text=True)
+    hits = []
+    for f in listing.stdout.split("\n"):
+        if not f:
+            continue
+        blob = subprocess.run(["git", "show", f":{f}"], capture_output=True, text=True)
+        if blob.returncode:
+            continue
+        hits += [f"LEAK  {f}  contient la valeur de {k}" for k, v in values.items() if v in blob.stdout]
+    return hits
+
+
+def cmd_leaks(a, e):
+    """Cherche des valeurs gérées présentes en clair : dans l'arbre, ou --staged
+    dans l'index git (pour un hook pre-commit)."""
+    values = {k: v for k, v in e.data.items() if len(v) >= 6}
+    hits = _leaks_staged(values) if a.staged else _leaks_tree(values)
+    return _report(hits, "\nClean — aucune valeur gérée trouvée en clair.")
 
 
 def cmd_audit(a, e):
@@ -247,7 +284,7 @@ def cmd_audit(a, e):
 _FAMILIES = [
     ("inventaire & santé", ["list", "status", "check", "doctor", "audit", "leaks"]),
     ("rotation & application", ["plan", "rotate", "apply", "render", "verify-render"]),
-    ("valeurs", ["get", "set", "gen", "add"]),
+    ("valeurs", ["get", "set", "gen", "add", "run"]),
     ("adoption", ["scan", "import", "adopt"]),
     ("store chiffré", ["seal", "open"]),
 ]
@@ -305,10 +342,13 @@ def build_parser():
     add("gen", "génère une valeur pour une clé", cmd_gen, (("key",), {}),
         (("--kind",), {"choices": sorted(GEN_KINDS), "default": "password"}),
         (("--length",), {"type": int, "default": 0}))
+    add("run", "exécute une commande avec les secrets en variables d'env (rien sur disque)",
+        cmd_run, (("--svc",), {"default": ""}), (("cmd",), {"nargs": argparse.REMAINDER}))
     add("add", "enregistre un nouveau secret + ses sinks dans secrets.conf", cmd_add,
         (("name",), {}), (("--kind",), {"default": "password"}),
         (("--group",), {"default": "auto"}), (("--length",), {"type": int, "default": 0}),
-        (("--sink",), {"action": "append", "default": []}), (("--note",), {"default": ""}))
+        (("--sink",), {"action": "append", "default": []}), (("--note",), {"default": ""}),
+        (("--validate",), {"default": ""}))
     add("import", "adopte des valeurs déjà en place (fichier/config) vers le store", cmd_import,
         (("name",), {"nargs": "?"}), (("--all",), {"action": "store_true"}),
         (("--source",), {}), (("--force",), {"action": "store_true"}))
@@ -328,7 +368,8 @@ def build_parser():
         (("--user",), {"default": ""}), (("--since",), {"default": "7d"}),
         (("--denied",), {"action": "store_true"}), (("--limit",), {"type": int, "default": 200}),
         (("--json",), {"action": "store_true"}))
-    add("leaks", "cherche des valeurs gérées présentes en clair dans le repo", cmd_leaks)
+    add("leaks", "cherche des valeurs gérées présentes en clair dans le repo", cmd_leaks,
+        (("--staged",), {"action": "store_true"}))
     ap.epilog = _epilog(helps)
     return ap
 

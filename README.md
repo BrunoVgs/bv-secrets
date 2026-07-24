@@ -216,10 +216,15 @@ Completes subcommands, flags, and dynamically the secret names (`--only`, `get`,
 | `adopt <file> [--prefix P_]` | onboard an app: detect, declare, import |
 | `scan` / `import` | list a file's keys / pull in-place values into the store |
 | `get` / `set` / `gen` / `add` | read, write, generate, register |
+| `run [--svc S] -- <cmd>` | run a command with the secrets as env vars, nothing on disk |
 | `render` / `verify-render` | write / check `rendered/<service>.env` |
 | `seal` / `open` | encrypted store mirror for off-machine backup |
 | `audit [--source --since --denied --ip --json]` | who reached what, when, what changed |
-| `leaks` | find managed values sitting in cleartext elsewhere |
+| `leaks [--staged]` | find managed values in cleartext (tree, or the git index) |
+
+Guard your commits: `--staged` scans what's about to be committed. Install the hook
+with `cp deploy/git-hooks/pre-commit .git/hooks/ && chmod +x .git/hooks/pre-commit`,
+and a commit that embeds a managed value in cleartext is refused.
 
 ## Two axes, don't mix them
 
@@ -230,6 +235,24 @@ Completes subcommands, flags, and dynamically the secret names (`--only`, `get`,
 An `apikey` is issued by someone else's app, so it is never generated; the name rule
 (`API`/`TOKEN`) makes turning it into a generatable kind fail in the UI, the API and
 the worker.
+
+## Value validation
+
+A `validate` rule checks the *shape* of a value (distinct from `probe`, which tests
+that it *works*). It is enforced at the entry points — `set` and `import` refuse a
+malformed value — and reported by `check`.
+
+```ini
+[STRIPE_API_KEY]
+kind     = apikey
+validate = prefix:sk_live_
+
+[DB_PORT]
+validate = int:1..65535
+```
+
+Rules: `regex:` · `prefix:` · `suffix:` · `enum:a,b,c` · `len:<spec>` ·
+`int[:<spec>]` · `url`, where `<spec>` is `>=N` `<=N` `>N` `<N` `N..M` `N`.
 
 ## Layout
 

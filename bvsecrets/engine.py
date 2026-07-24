@@ -12,7 +12,7 @@ import string
 import subprocess
 from pathlib import Path
 
-from . import locations
+from . import locations, validate
 from .config import (ALL_KINDS, COMPOSE_DIR, CONF, DEFAULT_LEN, GEN_KINDS, KEYFILE,
                      LOCAL, MASTER, META, MIRROR, REF, RENDER_DIR)
 from .envfile import parse_env, write_env
@@ -54,6 +54,7 @@ class Engine:
                 "norestart": [x.strip() for x in s.get("norestart", "").splitlines() if x.strip()],
                 "compute": s.get("compute", "").strip(),
                 "probe": s.get("probe", "").strip(),
+                "validate": s.get("validate", "").strip(),
                 "note": s.get("note", "").strip(),
             }
         return out
@@ -99,6 +100,21 @@ class Engine:
                     svc, _, var = sink[4:].partition("#")
                     services.setdefault(svc, {})[var] = self.value_of(name, data)
         return services
+
+    def env_for(self, services=None) -> dict:
+        """Variables d'env (issues des sinks env:) pour les services demandes, ou
+        toutes fusionnees. Sert a `run` : injecter les secrets dans un process sans
+        rien ecrire sur disque."""
+        smap = self.service_map()
+        if services:
+            unknown = [s for s in services if s not in smap]
+            if unknown:
+                raise ConfigError(f"service sans sink env: {', '.join(unknown)}")
+            smap = {s: smap[s] for s in services}
+        env = {}
+        for kv in smap.values():
+            env.update(kv)
+        return env
 
     def render(self, data: dict = None) -> dict:
         services = self.service_map(data)
@@ -422,6 +438,10 @@ class Engine:
         if value in (None, ""):
             log(f"· {name}: aucune localisation lisible (poser à la main avec `set`)")
             return None
+        err = validate.check(self.cfg[name]["validate"], value)
+        if err:
+            log(f"✗ {name}: valeur en place invalide ({err})")
+            return None
         d = parse_env(MASTER)
         d[name] = value
         write_env(MASTER, d)
@@ -499,6 +519,10 @@ class Engine:
                 problems.append(f"NAME/KIND {n}: kind=apikey mais le nom ne contient ni API ni TOKEN")
             if c["kind"] != "computed" and not self.data.get(n):
                 problems.append(f"MISSING value: {n}")
+            if c["validate"] and self.data.get(n):
+                err = validate.check(c["validate"], self.value_of(n))
+                if err:
+                    problems.append(f"INVALID {n}: {err}")
             problems += [f"BAD sink on {n}: {s}" for s in c["sinks"]
                          if s.split(":", 1)[0] not in valid_sinks]
         for p in [MASTER, LOCAL] + list(RENDER_DIR.glob("*.env")):

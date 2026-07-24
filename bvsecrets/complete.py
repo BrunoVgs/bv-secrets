@@ -17,6 +17,14 @@ def _secret_names():
         return []
 
 
+def _service_names():
+    from .engine import Engine
+    try:
+        return sorted(Engine().service_map())
+    except Exception:
+        return []
+
+
 def _subcommands(parser):
     for action in parser._actions:
         if isinstance(action, argparse._SubParsersAction):
@@ -42,6 +50,8 @@ def candidates(parser, words, cword):
 
     if prev in ("--only", "--service"):
         return _secret_names()
+    if prev == "--svc":
+        return _service_names()
     if prev == "--kind":
         return sorted(GEN_KINDS)
     if prev == "--group":
