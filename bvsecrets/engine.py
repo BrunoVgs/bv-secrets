@@ -439,24 +439,34 @@ class Engine:
         log(f"\n{adopted} secret(s) adopté(s).")
         return adopted
 
+    def _sink_readable(self, sink: str) -> bool:
+        scheme = sink.split(":", 1)[0]
+        return scheme == "env" or scheme in locations.readable_schemes()
+
     def status(self, names, log):
-        """Compare store value to in-place: synced / drift / missing."""
-        counts = {"sync": 0, "drift": 0, "extern": 0, "unknown": 0}
+        """Compare store value to in-place. A secret with only write-only sinks
+        (mysql/linux/cmd) is non verifiable ; a readable sink whose file/cle is
+        absent = declare mais pas deploye (cas machine nue)."""
+        counts = {"sync": 0, "drift": 0, "extern": 0, "absent": 0, "unknown": 0}
         for n in names:
             stored = self.value_of(n)
             found, where = self.read_current(n)
-            if found is None:
-                mark, detail, key = "·", "non lisible", "unknown"
-            elif not stored:
+            readable = any(self._sink_readable(s) for s in self.cfg.get(n, {}).get("sinks", []))
+            if found is not None and not stored:
                 mark, detail, key = "+", f"présent dehors, absent du store ({where.split('#')[0]})", "extern"
-            elif found == stored:
+            elif found is not None and found == stored:
                 mark, detail, key = "=", "synchronisé", "sync"
+            elif found is not None:
+                mark, detail, key = "!", f"DÉRIVE vs {where.split('#')[0]}", "drift"
+            elif readable:
+                mark, detail, key = "-", "déclaré, non déployé", "absent"
             else:
-                mark, detail, key = "≠", f"DÉRIVE vs {where.split('#')[0]}", "drift"
+                mark, detail, key = "?", "non vérifiable (sink write-only)", "unknown"
             counts[key] += 1
             log(f"{mark} {n:34} {detail}")
         log(f"\n{counts['sync']} synchronisés, {counts['drift']} dérives, "
-            f"{counts['extern']} à importer, {counts['unknown']} non lisibles.")
+            f"{counts['extern']} à importer, {counts['absent']} non déployés, "
+            f"{counts['unknown']} non vérifiables.")
         return counts["drift"]
 
     def scan(self, location: str, log):
@@ -477,6 +487,7 @@ class Engine:
         """-> list of problems (strings). Empty = healthy config."""
         from .config import GROUPS, SINK_TYPES, looks_like_apikey
         problems = []
+        valid_sinks = set(SINK_TYPES) | locations.writable_schemes()
         for n, c in self.cfg.items():
             if c["kind"] not in ALL_KINDS:
                 problems.append(f"BAD kind on {n}: {c['kind']}")
@@ -489,7 +500,7 @@ class Engine:
             if c["kind"] != "computed" and not self.data.get(n):
                 problems.append(f"MISSING value: {n}")
             problems += [f"BAD sink on {n}: {s}" for s in c["sinks"]
-                         if s.split(":", 1)[0] not in SINK_TYPES]
+                         if s.split(":", 1)[0] not in valid_sinks]
         for p in [MASTER, LOCAL] + list(RENDER_DIR.glob("*.env")):
             if p.exists() and oct(p.stat().st_mode & 0o777) != "0o600":
                 problems.append(f"PERM {p} is {oct(p.stat().st_mode & 0o777)}, want 0o600")

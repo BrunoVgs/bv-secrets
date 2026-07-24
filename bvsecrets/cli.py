@@ -6,7 +6,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from . import adopt, audit, conffile
+from . import adopt, audit, conffile, ui
 from .config import (CONF, COMPOSE_DIR, GEN_KINDS, KEYFILE, LOCAL, MASTER, MIRROR,
                      RENDER_DIR, SECRETS_DIR, looks_like_apikey)
 from .engine import ConfigError, Engine, RotateAborted
@@ -19,8 +19,9 @@ def _log(msg=""):
 
 def _report(problems, clean_msg):
     for p in problems:
-        print(p)
-    print(clean_msg if not problems else f"\n{len(problems)} problème(s).")
+        print(ui.paint(p, ui.RED))
+    print(ui.paint(clean_msg, ui.GREEN) if not problems
+          else ui.paint(f"\n{len(problems)} problème(s).", ui.RED))
     return 1 if problems else 0
 
 
@@ -31,12 +32,15 @@ def cmd_list(a, e):
             if s.startswith("env:"):
                 svc_of.setdefault(name, []).append(s[4:].split("#", 1)[0])
     meta = e.meta()
+    rows = []
     for n in sorted(e.cfg):
         c = e.cfg[n]
         value = e.value_of(n)
-        present = f"{len(value):>3}c" if value else " -- "
-        print(f"{n:34} {c['kind']:9} {c['group']:8} [{present}] {meta.get(n, ''):17} "
-              f"-> {','.join(svc_of.get(n, ['(no-env)']))}")
+        present = (f"{len(value)}c", ui.GREEN) if value else ("--", ui.RED)
+        rows.append([n, (c["kind"], ui.DIM), c["group"], present,
+                     (meta.get(n, ""), ui.DIM),
+                     (", ".join(svc_of.get(n, ["(no-env)"])), ui.CYAN)])
+    print(ui.table(rows, headers=["SECRET", "KIND", "GROUP", "VAL", "LAST SET", "SERVICES"]))
 
 
 def cmd_check(a, e):
@@ -117,8 +121,8 @@ def cmd_scan(a, e):
 def cmd_add(a, e):
     """Add a secret section to secrets.conf in one command."""
     if not a.sink:
-        raise ConfigError("donner au moins un sink "
-                          "(env:svc#VAR, file:/p, linux:user, mysql:u@ctr, cmd:...)")
+        raise ConfigError("donner au moins un sink (env:svc#VAR, file:/p, linux:user, "
+                          "mysql:u@ctr, cmd:..., envfile:/p#K, json/yaml/ini/toml:/p#a.b.c)")
     conffile.append_sections(
         [conffile.render_section(a.name, a.kind, a.group, a.sink, a.length, a.note)])
     print(f"ajouté [{a.name}] à {CONF.name}. `bv-secrets gen {a.name}` puis `apply`.")
@@ -190,9 +194,6 @@ def cmd_leaks(a, e):
     return _report(hits, "\nClean — aucune valeur gérée trouvée en clair ailleurs.")
 
 
-_MARK = {"allow": "✓", "deny": "✗", "change": "~", "login": "→", "check": "?", "info": "·"}
-
-
 def cmd_audit(a, e):
     """Unified timeline: who reached what, when, from where, and what changed.
     Reads existing logs with privileges the account already has (docker + wheel)."""
@@ -204,11 +205,23 @@ def cmd_audit(a, e):
     if a.json:
         print(json.dumps(rows, ensure_ascii=False))
         return 0
+    if not rows:
+        print("aucun événement.")
+        return 0
+    aw = min(max(len(r["actor"]) for r in rows), 24)
+    tw = min(max(len(r["target"]) for r in rows), 18)
+    day = None
     for ev in rows:
-        when = datetime.datetime.fromtimestamp(ev["ts"]).strftime("%d/%m %H:%M")
-        mark = _MARK.get(ev["outcome"], "·")
-        print(f"{when}  {mark} {ev['source']:7} {ev['actor']:22.22} {ev['target']:16.16} {ev['detail']}")
-    print(f"\n{len(rows)} événement(s).")
+        dt = datetime.datetime.fromtimestamp(ev["ts"])
+        if dt.strftime("%d/%m/%Y") != day:
+            day = dt.strftime("%d/%m/%Y")
+            print(f"\n{ui.heading(day)}")
+        actor = ev["actor"][:aw].ljust(aw)
+        target = ev["target"][:tw].ljust(tw)
+        print(f"  {ui.paint(dt.strftime('%H:%M'), ui.DIM)}  {ui.outcome(ev['outcome'])}  "
+              f"{ui.paint(ev['source'][:7].ljust(7), ui.DIM)}  "
+              f"{actor}  {ui.paint(target, ui.CYAN)}  {ev['detail']}")
+    print(ui.paint(f"\n{len(rows)} événement(s).", ui.DIM))
     return 0
 
 
@@ -268,6 +281,11 @@ def build_parser():
 
 
 def main():
+    argv = sys.argv[1:]
+    if argv and argv[0] == "__complete":          # appel des scripts de complétion
+        from . import complete
+        complete.run(argv[1:])
+        return
     args = build_parser().parse_args()
     try:
         sys.exit(args.func(args, Engine()) or 0)

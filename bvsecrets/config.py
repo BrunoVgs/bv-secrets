@@ -1,5 +1,11 @@
-"""Paths and domain vocabulary. Every path is env-overridable so the package runs
-as-is on the host (CLI, worker) and in the Docker image (web)."""
+"""Paths and domain vocabulary.
+
+One source of configuration, three ways to set it: a project file `bv-secrets.ini`
+(committed, human-readable), overridden by environment variables (Docker, OpenRC),
+falling back to sane defaults. Precedence: **env > file > default**. A bare machine
+with neither runs on defaults; a full stack sets the file once.
+"""
+import configparser
 import os
 import re
 from pathlib import Path
@@ -7,8 +13,40 @@ from pathlib import Path
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 
 
+def _load_project_config() -> dict:
+    """The `[bv-secrets]` section of the project INI, as a flat dict. Absent or
+    unreadable file -> empty dict (a bare machine needs no config file)."""
+    path = Path(os.environ.get("BV_CONFIG") or PROJECT_DIR / "bv-secrets.ini")
+    if not path.exists():
+        return {}
+    cp = configparser.ConfigParser(interpolation=None)
+    cp.optionxform = str
+    try:
+        cp.read(path, encoding="utf-8")
+    except (OSError, configparser.Error):
+        return {}
+    return dict(cp["bv-secrets"]) if cp.has_section("bv-secrets") else {}
+
+
+_FILE = _load_project_config()
+
+
+def _setting(env: str, default: str = "") -> str:
+    """Resolve one setting by precedence env > file > default. The file key is the
+    env name without the `BV_` prefix, lowercased (`BV_COMPOSE_DIR` -> `compose_dir`)."""
+    val = os.environ.get(env)
+    if val is not None:
+        return val
+    key = env[3:].lower() if env.startswith("BV_") else env.lower()
+    return _FILE.get(key, default)
+
+
 def _path(env: str, default) -> Path:
-    return Path(os.environ.get(env) or default)
+    return Path(_setting(env) or default)
+
+
+def _csv(env: str, default: str = "") -> list:
+    return [x.strip() for x in _setting(env, default).split(",") if x.strip()]
 
 
 SECRETS_DIR = _path("BV_SECRETS_DIR", "/opt/bv-secrets")
@@ -38,8 +76,7 @@ ACCESS_RENDER = _path("BV_ACCESS_RENDER", COMPOSE_DIR / "access" / "render-acces
 # Audit sources read by the worker with privileges it already has: Caddy log
 # (root:0600) via `docker exec`, host syslog (root:wheel) directly as bv.
 CADDY_LOG_DIR = _path("BV_CADDY_LOG_DIR", "/var/log/caddy")
-CADDY_CONTAINER = (os.environ.get("BV_CADDY_CONTAINER")
-                   or os.environ.get("BV_PROXY_SERVICE") or "caddy")
+CADDY_CONTAINER = _setting("BV_CADDY_CONTAINER") or _setting("BV_PROXY_SERVICE") or "caddy"
 HOST_SYSLOG = _path("BV_HOST_SYSLOG", "/var/log/messages")
 
 # LOCAL-ONLY: no outbound SSH. Remote sinks are rejected (see Engine._apply_sink).
@@ -54,29 +91,27 @@ ALL_KINDS = GEN_KINDS | FIXED_KINDS
 GROUPS = {"auto", "app", "careful", "manual"}
 DEFAULT_LEN = {"password": 20, "hex": 32, "b64": 32, "userpass": 24, "passphrase": 24}
 
+# Engine-native sink types. Structured connectors (envfile/regex/json/yaml/ini/toml)
+# are validated separately against the locations writer registry (see Engine.check).
 SINK_TYPES = ("env", "file", "linux", "mysql", "cmd")
 # Roles strongest to weakest; the first one is the superuser (passes every gate).
-ROLES = [r.strip() for r in os.environ.get("BV_ROLES", "admin,trusted,guest").split(",") if r.strip()]
+ROLES = [r.strip() for r in _setting("BV_ROLES", "admin,trusted,guest").split(",") if r.strip()]
 SUPERUSER = ROLES[0]
 ROTATE_GROUPS = {"auto", "app", "careful"}
 
 
-def _csv(env: str) -> list:
-    return [x.strip() for x in os.environ.get(env, "").split(",") if x.strip()]
-
-
 # Deployment-specific service names. Left empty, the matching feature is disabled
-# rather than acting on an arbitrary service. Set via /etc/conf.d/bvsecrets-worker.
-PROXY_SERVICE = os.environ.get("BV_PROXY_SERVICE", "")
+# rather than acting on an arbitrary service. Set via bv-secrets.ini or the env.
+PROXY_SERVICE = _setting("BV_PROXY_SERVICE", "")
 ACCESS_RELOAD_SERVICES = _csv("BV_ACCESS_RELOAD_SERVICES")
 
 # Account management runs the app's own CLI in its container. Console prefix and
 # subcommands are configurable so any framework works, not just Symfony.
-AUTH_SERVICE = os.environ.get("BV_AUTH_SERVICE", "")
-AUTH_CONSOLE = os.environ.get("BV_AUTH_CONSOLE", "php bin/console")
-AUTH_CMD_LIST = os.environ.get("BV_AUTH_CMD_LIST", "app:users")
-AUTH_CMD_SETROLE = os.environ.get("BV_AUTH_CMD_SETROLE", "app:set-role")
-AUTH_CMD_DELETE = os.environ.get("BV_AUTH_CMD_DELETE", "app:delete-user")
+AUTH_SERVICE = _setting("BV_AUTH_SERVICE", "")
+AUTH_CONSOLE = _setting("BV_AUTH_CONSOLE", "php bin/console")
+AUTH_CMD_LIST = _setting("BV_AUTH_CMD_LIST", "app:users")
+AUTH_CMD_SETROLE = _setting("BV_AUTH_CMD_SETROLE", "app:set-role")
+AUTH_CMD_DELETE = _setting("BV_AUTH_CMD_DELETE", "app:delete-user")
 
 # Access-log path prefixes to drop from the audit (internal polling, health checks).
 AUDIT_IGNORE_PREFIXES = tuple(_csv("BV_AUDIT_IGNORE_PATHS"))

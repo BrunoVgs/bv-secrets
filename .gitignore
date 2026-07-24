@@ -3,6 +3,10 @@
 # secrets.conf.example is versioned.
 secrets.conf
 
+# Project config: real service names, paths, roles. Only bv-secrets.ini.example
+# is versioned.
+bv-secrets.ini
+
 # The store, renders and encrypted mirror live outside the project ($BV_SECRETS_DIR)
 # and must never enter it.
 *.env

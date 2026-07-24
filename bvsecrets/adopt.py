@@ -5,9 +5,9 @@ The classifier is a heuristic: the result is ALWAYS proposed for review, never
 written without confirmation. Turns "edit secrets.conf by hand" into "review a
 list and adjust".
 
-Env files only: key enumeration is reliable there and the `envfile:` connector
-reads AND writes. Structured configs (YAML/JSON) are adopted by hand with `add` +
-`regex:` until dedicated writers exist.
+Env files only: key enumeration is reliable there. Structured configs
+(json/yaml/ini/toml) have read+write connectors but no key enumeration yet, so they
+are declared by hand with `add` targeting the matching scheme.
 """
 import re
 from collections import namedtuple
@@ -72,7 +72,7 @@ def plan_envfile(path, prefix="", known=frozenset()):
     conflicts: names already taken in secrets.conf (need a prefix)."""
     proposals, ignored, conflicts = [], [], []
     for key in locations.env_keys(str(path)):
-        value = locations.env_read(str(path), key)
+        value = locations.read_location(f"envfile:{path}#{key}")
         if not looks_secret(key, value):
             ignored.append(key)
             continue
