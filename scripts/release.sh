@@ -50,6 +50,19 @@ fi
 say "Push"
 git push origin main
 
+# --- wait for GitHub CI to go green on THIS commit before tagging -------------
+# The local tests above are a fast fail; GitHub Actions is the source of truth.
+say "Wait for GitHub CI"
+SHA=$(git rev-parse HEAD)
+RUN_ID=""; i=0
+while [ -z "$RUN_ID" ] && [ "$i" -lt 24 ]; do
+    RUN_ID=$(gh run list -w ci.yml -c "$SHA" -L 1 --json databaseId -q '.[0].databaseId' 2>/dev/null || true)
+    [ -n "$RUN_ID" ] && break
+    i=$((i + 1)); sleep 5
+done
+[ -n "$RUN_ID" ] || { echo "no CI run found for $SHA after 2min, aborting."; exit 1; }
+gh run watch "$RUN_ID" --exit-status    # blocks until done, non-zero if CI fails
+
 # --- build the release assets, no build dep (setuptools backend) -------------
 say "Build wheel + sdist"
 rm -rf dist build ./*.egg-info
