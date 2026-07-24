@@ -22,5 +22,10 @@ __pycache__/
 *.bak
 *.bak.*
 
+# Packaging artifacts
+build/
+dist/
+*.egg-info/
+
 # Worker site config: real deployment service names.
 deploy/bvsecrets-worker.confd

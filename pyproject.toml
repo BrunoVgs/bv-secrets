@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bv-secrets"
+version = "1.0.0"
+description = "Server-side secret rotation, access control and audit in a single stdlib-only tool."
+readme = "README.md"
+requires-python = ">=3.11"            # tomllib
+license = { file = "LICENSE" }
+authors = [{ name = "Bruno Vergnes" }]
+keywords = ["secrets", "rotation", "audit", "devops", "self-hosted"]
+dependencies = []                      # zero runtime dependency, on purpose
+
+[project.urls]
+Homepage = "https://github.com/BrunoVgs/bv-secrets"
+
+[project.scripts]
+bv-secrets = "bvsecrets.cli:main"
+
+[tool.setuptools]
+packages = ["bvsecrets", "bvsecrets.locations", "bvsecrets.worker"]

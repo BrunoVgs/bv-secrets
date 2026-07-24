@@ -13,6 +13,7 @@
   <img alt="Python 3.11+" src="https://img.shields.io/badge/python-3.11%2B-3776ab">
   <img alt="No dependencies" src="https://img.shields.io/badge/dependencies-none-3fbf5f">
   <img alt="MIT licence" src="https://img.shields.io/badge/licence-MIT-c0242c">
+  <img alt="CI" src="https://github.com/BrunoVgs/bv-secrets/actions/workflows/ci.yml/badge.svg">
 </p>
 
 ---
@@ -35,6 +36,9 @@ runs on a bare box.
 git clone https://github.com/BrunoVgs/bv-secrets.git && cd bv-secrets
 cp secrets.conf.example  secrets.conf     # describe your secrets
 cp bv-secrets.ini.example bv-secrets.ini  # optional: point it at your stack
+
+# run from the checkout with the shim, or install a real `bv-secrets` command:
+pipx install .               # -> bv-secrets on your PATH, still zero runtime deps
 
 bin/bv-secrets list          # inventory, no values
 bin/bv-secrets status        # store vs what's deployed: synced / drift / not deployed
@@ -123,6 +127,18 @@ Privileges are lopsided on purpose.
 | Dashboard | container | read the store, drop jobs in a spool, nothing else |
 
 Values are never logged. `get` and `open` are the only commands that print one.
+
+**Where the store rests.** The store is a `0600` file outside the repo
+(`$BV_SECRETS_DIR/bv-secrets.env`) — plaintext, like any `.env` on the box. The
+trust model is the host's own: file permissions plus the privilege split above, not
+encryption-at-rest. That is the deliberate trade for having no daemon, no unseal
+step and no network — the opposite of Vault. If your threat model needs the store
+encrypted at rest, this tool is not it (yet). `seal` covers the other case: an
+encrypted `store.enc` mirror you can carry off the machine for backup.
+
+**Host assumption.** Rotating Linux accounts shells out to `doas` (the only host
+elevation the tool uses), so a box needs it installed. Broader init/elevation
+portability is on the table, not done.
 
 ## Architecture
 
@@ -270,6 +286,17 @@ bvsecrets/          engine shared by CLI, worker and web
 completions/        bash + zsh completion scripts
 web/                dashboard (read-only)
 ```
+
+## Development
+
+Stdlib-only, so the test suite needs nothing installed:
+
+```sh
+python -m unittest discover -s tests    # surgical writes, rotate rollback, validation
+```
+
+CI (`.github/workflows/ci.yml`) runs it on Python 3.11-3.13 and builds the wheel on
+every push and PR.
 
 ## Licence
 
