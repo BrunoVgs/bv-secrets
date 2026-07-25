@@ -438,6 +438,11 @@ def main():
         sys.exit(args.func(args, engine) or 0)
     except (ConfigError, RotateAborted) as e:
         sys.exit(str(e))
+    except BrokenPipeError:
+        # `bv-secrets init --unit openrc | tee ...` or `| head`: the reader closed
+        # first. Nothing failed, so exit quietly instead of dumping a traceback.
+        os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+        sys.exit(0)
 
 
 if __name__ == "__main__":

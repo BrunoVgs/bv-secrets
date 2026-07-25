@@ -132,9 +132,13 @@ def install_unit(init: str, yes: bool, log=print) -> int:
     path = UNIT_PATH[init]
     log(f"\n--- {path} ---\n{text}")
     if os.geteuid() != 0:
-        log("Pas les droits root pour poser l'unité. À lancer :\n"
-            f"    bv-secrets init --unit {init} | sudo tee {path} >/dev/null")
-        log("\n".join(f"    sudo {c}" for c in enable_commands(init)))
+        # Print the elevation this box actually has: a doas-only machine (Alpine)
+        # gets `command not found` from copy-pasted sudo.
+        tool = elevator()
+        prefix = f"{Path(tool).name} " if tool else ""
+        log(f"Pas les droits root pour poser l'unité. À lancer{'' if tool else ' en root'} :\n"
+            f"    bv-secrets init --unit {init} | {prefix}tee {path} >/dev/null")
+        log("\n".join(f"    {prefix}{c}" for c in enable_commands(init)))
         return 1
     if not (yes or confirm(f"Écrire {path} ?")):
         return 1

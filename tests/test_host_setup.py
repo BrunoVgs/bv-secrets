@@ -92,6 +92,35 @@ class TestInitIsTheWholeInstall(unittest.TestCase):
             self.assertEqual(conf.read_text(), "[MINE]\nkind = password\n")
 
 
+class TestPrintedCommandsFitTheBox(unittest.TestCase):
+    """Les commandes affichees doivent etre copiables telles quelles : une machine
+    sans sudo (Alpine, doas seul) recevait `command not found`."""
+
+    def test_elevation_shown_is_the_one_installed(self):
+        tool = service.elevator()
+        out = []
+        service.install_unit("openrc", yes=False, log=out.append)
+        printed = "\n".join(out)
+        if tool:
+            name = Path(tool).name
+            self.assertIn(f"{name} tee ", printed)
+            self.assertIn(f"{name} rc-update", printed)
+        else:
+            self.assertIn("en root", printed)
+            self.assertNotIn("sudo ", printed)
+
+    def test_a_closed_pipe_is_not_an_error(self):
+        # `bv-secrets init --unit openrc | head -1`
+        with subprocess.Popen([sys.executable, "-m", "bvsecrets.cli", "init", "--unit", "openrc"],
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                              env={**os.environ, "PYTHONPATH": str(ROOT)}) as unit:
+            head = subprocess.run(["head", "-1"], stdin=unit.stdout, capture_output=True, text=True)
+            unit.stdout.close()
+            stderr = unit.stderr.read().decode()
+        self.assertEqual(head.stdout.strip(), "#!/sbin/openrc-run")
+        self.assertNotIn("BrokenPipeError", stderr)
+
+
 class TestRemovedLinuxSink(unittest.TestCase):
     """Un sink supprime doit se voir tout de suite, avec son remplacant : sinon la
     valeur n'est plus appliquee la ou on croit qu'elle l'est."""
