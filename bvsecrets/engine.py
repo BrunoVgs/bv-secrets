@@ -6,6 +6,7 @@ secret.
 """
 import base64
 import configparser
+import grp
 import os
 import secrets as pysecrets
 import string
@@ -46,6 +47,13 @@ class Engine:
         out = {}
         for name in cp.sections():
             s = cp[name]
+            for sink in s.get("sinks", "").splitlines():
+                if sink.strip().startswith("linux:"):
+                    user = sink.strip()[6:].partition("@")[0]
+                    raise ConfigError(
+                        f"{name}: le sink `linux:` a été supprimé (il imposait doas à "
+                        f"l'hôte).\nLe remplacer par la commande de ton choix :\n"
+                        f"    sinks = cmd:sudo chpasswd <<< '{user}:{{value}}'")
             out[name] = {
                 "kind": s.get("kind", "manual").strip(),
                 "length": int((s.get("length", "") or "0").strip() or 0),
@@ -143,13 +151,6 @@ class Engine:
             p.write_text(value)
             os.chmod(p, int(mode, 8) if mode else 0o600)
             return True
-        if typ == "linux":
-            user, _, host = arg.partition("@")
-            if host:
-                log(f"    remote linux sink refused (local-only): {arg}")
-                return False
-            # doas prompts for elevation on the TTY: interactive CLI only
-            return self._run(["doas", "chpasswd"], inp=f"{user}:{value}\n".encode()).returncode == 0
         if typ == "mysql":
             return self._apply_mysql(arg, value, eff)
         if typ == "cmd":
@@ -193,7 +194,7 @@ class Engine:
             dbuser, _, ctr = arg.partition("@")
             return self._run(["docker", "exec", "-i", "-e", f"MYSQL_PWD={value}",
                               ctr, "mariadb", "-u", dbuser, "-e", "SELECT 1"]).returncode == 0
-        return True                      # env/file/linux/cmd: no non-destructive check
+        return True                      # env/file/cmd: no non-destructive check
 
     # ---- container recreation ----
     def affected_computed(self, names) -> list:
@@ -528,6 +529,31 @@ class Engine:
         for p in [MASTER, LOCAL] + list(RENDER_DIR.glob("*.env")):
             if p.exists() and oct(p.stat().st_mode & 0o777) != "0o600":
                 problems.append(f"PERM {p} is {oct(p.stat().st_mode & 0o777)}, want 0o600")
+        return problems + self.check_host()
+
+    @staticmethod
+    def check_host() -> list:
+        """Host prerequisites, reported where you look for them instead of as a
+        traceback on the first rotate."""
+        from .config import SECRETS_DIR, host_log_source
+        problems = []
+        if not SECRETS_DIR.is_dir():
+            problems.append(f"STORE absent: {SECRETS_DIR} — le créer avec `bv-secrets init`")
+        elif not os.access(SECRETS_DIR, os.W_OK):
+            problems.append(f"STORE non inscriptible par ce compte: {SECRETS_DIR}")
+        groups = set()
+        for gid in os.getgroups():
+            try:
+                groups.add(grp.getgrgid(gid).gr_name)
+            except KeyError:          # gid without an entry (containers): not our business
+                pass
+        if "docker" not in groups and os.geteuid() != 0:
+            problems.append("GROUPE docker manquant pour ce compte : les sinks mysql/env "
+                            "et la recréation de conteneurs échoueront")
+        kind, _ = host_log_source()
+        if not kind:
+            problems.append("AUDIT source hôte introuvable (ni syslog ni journalctl lisible) : "
+                            "la source `host` restera vide — groupe adm/wheel/systemd-journal ?")
         return problems
 
     def render_parity(self) -> list:

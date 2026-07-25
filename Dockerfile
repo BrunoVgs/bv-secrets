@@ -1,7 +1,7 @@
 # Dashboard bv-secrets. Pure stdlib, aucune dépendance pip.
 #
 # L'image ne contient que la face LECTURE : le moteur et l'UI web. Le worker,
-# seul composant privilégié, tourne hors conteneur (voir deploy/).
+# seul composant privilégié, tourne hors conteneur (`bv-secrets install-service`).
 FROM python:3.12-slim
 WORKDIR /app
 

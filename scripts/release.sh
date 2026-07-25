@@ -1,54 +1,65 @@
 #!/bin/sh
-# Release bv-secrets end to end: test -> commit -> push -> build -> GitHub release.
+# Release bv-secrets end to end, one command, nothing to run by hand:
+# commit -> push -> CI -> tag -> build -> GitHub release.
 #
-#   scripts/release.sh [VERSION]     VERSION defaults to 1.0.0
+#   scripts/release.sh                      version from pyproject.toml
+#   scripts/release.sh 1.2.0                must match pyproject.toml
+#   scripts/release.sh 1.2.0 "Subject..."   commit message, else $EDITOR opens
 #
-# Idempotent-ish: skips the commit if the tree is clean, refuses if the tag
-# already exists. Requires `gh` authenticated (gh auth status) and a `main` that
-# tracks origin. No compiled binary: the tool is pure Python, so the release
-# assets are the wheel + sdist (people can `pipx install` them) alongside the
-# source archives GitHub attaches automatically.
+# Nothing about a given release is written in here: the version comes from
+# pyproject.toml, the notes from the commits since the last tag. Every command
+# it runs is printed before it runs. Requires `gh` authenticated and a `main`
+# that tracks origin. Pure Python, so the assets are the wheel + sdist.
 set -eu
-
-VERSION="${1:-1.0.0}"
-TAG="v${VERSION}"
 
 # --- run from the repo root, whatever the caller's cwd -----------------------
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
 say() { printf '\n\033[1m== %s\033[0m\n' "$1"; }
+run() { printf '\033[2m$ %s\033[0m\n' "$*"; "$@"; }
+die() { printf '\033[31m%s\033[0m\n' "$1" >&2; exit 1; }
+
+PYPROJECT_VERSION=$(python3 -c \
+    'import tomllib;print(tomllib.load(open("pyproject.toml","rb"))["project"]["version"])')
+VERSION="${1:-$PYPROJECT_VERSION}"
+MESSAGE="${2:-}"
+TAG="v${VERSION}"
 
 # --- preconditions -----------------------------------------------------------
-[ "$(git branch --show-current)" = "main" ] || { echo "not on main, aborting."; exit 1; }
-gh auth status >/dev/null 2>&1 || { echo "gh not authenticated (gh auth login)."; exit 1; }
+say "Preflight $TAG"
+[ "$(git branch --show-current)" = "main" ] || die "not on main, aborting."
+gh auth status >/dev/null 2>&1 || die "gh not authenticated (gh auth login)."
+[ "$VERSION" = "$PYPROJECT_VERSION" ] || \
+    die "asked for $VERSION but pyproject.toml says $PYPROJECT_VERSION — bump it first."
 if git rev-parse "$TAG" >/dev/null 2>&1 || gh release view "$TAG" >/dev/null 2>&1; then
-    echo "$TAG already exists, aborting."; exit 1
+    die "$TAG already exists, aborting."
 fi
+echo "version $VERSION, tag $TAG, from $(git rev-parse --short HEAD)"
 
 # --- gate: never release a broken tree ---------------------------------------
 say "Tests"
-python3 -m compileall -q bvsecrets
-python3 -m unittest discover -s tests -t .
+run python3 -m compileall -q bvsecrets
+run python3 -m unittest discover -s tests -t .
 
-# --- commit any pending work (store + config are gitignored) -----------------
+# --- commit whatever is pending (store + real config are gitignored) ---------
 if [ -n "$(git status --porcelain)" ]; then
     say "Commit"
-    git add -A
-    git commit -m "Release ${TAG}
-
-- unittest suite over the risky core: surgical writes per format, rotate
-  rollback, validation, config precedence (zero deps)
-- GitHub Actions CI: run the suite on 3.11-3.13, build wheel + sdist
-- pyproject.toml: pipx-installable bv-secrets console script
-- README: store is 0600 plaintext (host-perms trust, not encryption-at-rest;
-  seal covers encrypted backup); Linux-account rotation needs doas"
+    run git status --short
+    run git add -A
+    if [ -n "$MESSAGE" ]; then
+        run git commit -m "$MESSAGE"
+    elif [ -t 0 ]; then
+        git commit -e -m "Release ${TAG}"      # $EDITOR opens, prefilled
+    else
+        run git commit -m "Release ${TAG}"
+    fi
 else
     echo "tree clean, nothing to commit."
 fi
 
 say "Push"
-git push origin main
+run git push origin main
 
 # --- wait for GitHub CI to go green on THIS commit before tagging -------------
 # The local tests above are a fast fail; GitHub Actions is the source of truth.
@@ -60,8 +71,14 @@ while [ -z "$RUN_ID" ] && [ "$i" -lt 24 ]; do
     [ -n "$RUN_ID" ] && break
     i=$((i + 1)); sleep 5
 done
-[ -n "$RUN_ID" ] || { echo "no CI run found for $SHA after 2min, aborting."; exit 1; }
-gh run watch "$RUN_ID" --exit-status    # blocks until done, non-zero if CI fails
+[ -n "$RUN_ID" ] || die "no CI run found for $SHA after 2min, aborting."
+run gh run watch "$RUN_ID" --exit-status   # blocks until done, non-zero if CI fails
+
+# --- tag locally and push it, so the next release can diff from here ---------
+say "Tag"
+PREVIOUS=$(git describe --tags --abbrev=0 2>/dev/null || true)
+run git tag -a "$TAG" -m "bv-secrets ${VERSION}"
+run git push origin "$TAG"
 
 # --- build the release assets, no build dep (setuptools backend) -------------
 say "Build wheel + sdist"
@@ -69,36 +86,24 @@ rm -rf dist build ./*.egg-info
 python3 -c "from setuptools import build_meta as b; import os; \
 os.makedirs('dist', exist_ok=True); \
 print(b.build_sdist('dist')); print(b.build_wheel('dist'))"
+ls -1 dist
 
-# --- cut the release ---------------------------------------------------------
-say "GitHub release $TAG"
-gh release create "$TAG" dist/* --title "bv-secrets ${VERSION}" --notes-file - <<'EOF'
-First public release.
-
-bv-secrets rotates, applies and audits infrastructure secrets on a single
-self-hosted box, from one declarative file, with zero runtime dependencies
-(Python stdlib only).
-
-**Highlights**
-- Rotation with all-or-nothing rollback: SQL users, .env/config files, Linux
-  passwords and app commands move together or not at all.
-- Two-way connectors for .env, JSON, YAML, INI, TOML and regex — surgical
-  writes that change only the targeted value, comments and formatting kept
-  byte-for-byte.
-- `status` drift detection, `doctor` live probes, `adopt`/`import` to onboard
-  existing files, `run` to inject secrets into a process with nothing on disk.
-- Read-only audit timeline over logs the box already writes.
-- Unprivileged dashboard + privileged worker split via a filesystem spool.
-
-**Install**
-- `pipx install .` from a checkout, or grab the wheel below.
-- Python 3.11+ (tomllib). `doas` needed only for Linux-account rotation.
-
-**Scope**
-Single-host / self-hosted (VPS, homelab). The store is a 0600 plaintext file —
-host-permission trust, not encryption-at-rest (see Security model). Not a
-Vault/k8s replacement, by design.
-EOF
+# --- notes: the commits since the last tag, nothing hand-maintained ----------
+RANGE="${PREVIOUS:+${PREVIOUS}..}HEAD"
+say "GitHub release $TAG ($RANGE)"
+NOTES=$(mktemp)
+{
+    printf 'Server-side secret rotation, access control and audit in a single\n'
+    printf 'stdlib-only tool. Python 3.11+, no runtime dependency.\n\n'
+    printf '**Changes**\n'
+    git log --no-merges --pretty='- %s' "$RANGE"
+    printf '\n**Install**\n'
+    printf '`pipx install bv_secrets-%s-py3-none-any.whl`, or `pipx install .`\n' "$VERSION"
+    printf 'from a checkout, then `bv-secrets init`.\n'
+} > "$NOTES"
+cat "$NOTES"
+run gh release create "$TAG" dist/* --title "bv-secrets ${VERSION}" --notes-file "$NOTES"
+rm -f "$NOTES"
 
 rm -rf build ./*.egg-info
 say "Done: https://github.com/BrunoVgs/bv-secrets/releases/tag/${TAG}"

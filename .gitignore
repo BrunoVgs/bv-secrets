@@ -29,3 +29,4 @@ dist/
 
 # Worker site config: real deployment service names.
 deploy/bvsecrets-worker.confd
+deploy/bvsecrets-worker.env

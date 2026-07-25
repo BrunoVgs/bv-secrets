@@ -7,9 +7,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-from . import adopt, audit, conffile, ui, validate
-from .config import (CONF, COMPOSE_DIR, GEN_KINDS, KEYFILE, LOCAL, MASTER, MIRROR,
-                     RENDER_DIR, SECRETS_DIR, looks_like_apikey)
+from . import adopt, audit, conffile, service, ui, validate
+from .config import (CONF, COMPOSE_DIR, CONFIG_FILE, GEN_KINDS, KEYFILE, LOCAL, MASTER,
+                     MIRROR, PROJECT_DIR, RENDER_DIR, SECRETS_DIR, looks_like_apikey)
 from .engine import ConfigError, Engine, RotateAborted
 from .envfile import parse_env, write_env
 
@@ -156,7 +156,7 @@ def cmd_scan(a, e):
 def cmd_add(a, e):
     """Add a secret section to secrets.conf in one command."""
     if not a.sink:
-        raise ConfigError("donner au moins un sink (env:svc#VAR, file:/p, linux:user, "
+        raise ConfigError("donner au moins un sink (env:svc#VAR, file:/p, "
                           "mysql:u@ctr, cmd:..., envfile:/p#K, json/yaml/ini/toml:/p#a.b.c)")
     conffile.append_sections(
         [conffile.render_section(a.name, a.kind, a.group, a.sink, a.length, a.note, a.validate)])
@@ -250,6 +250,51 @@ def cmd_leaks(a, e):
     return _report(hits, "\nClean — aucune valeur gérée trouvée en clair.")
 
 
+def cmd_init(a, e):
+    """Prépare l'hôte : crée le store. Seule commande, avec install-service, qui
+    peut demander root — et jamais sans afficher la commande ni sans TTY."""
+    target = Path(a.dir).expanduser() if a.dir else SECRETS_DIR
+    rc = service.create_store(target, _log)
+    if rc == 0 and a.dir and target != SECRETS_DIR:
+        service.pin_secrets_dir(target)
+        _log(f"✓ secrets_dir = {target} écrit dans {CONFIG_FILE.name}")
+    if rc == 0 and not CONF.exists():
+        _log(f"· pas encore de {CONF.name} : cp secrets.conf.example {CONF.name}")
+    return rc
+
+
+def cmd_install_service(a, e):
+    """Génère l'unité du worker pour l'init détecté, avec le compte courant, les
+    chemins résolus et l'interpréteur en cours. Aucun template à éditer."""
+    init = a.init or service.detect_init()
+    text = service.unit_text(init)
+    path = service.UNIT_PATH[init]
+    if a.print_only:
+        sys.stdout.write(text)
+        return 0
+    user, group = service.account()
+    _log(f"init détecté : {init}\ncompte       : {user}:{group}\n"
+         f"projet       : {PROJECT_DIR}\npython       : {sys.executable}\n")
+    _log(f"--- {path} ---")
+    _log(text)
+    if os.geteuid() != 0:
+        _log("Pas les droits root. Pour installer :\n"
+             f"    bv-secrets install-service --print | sudo tee {path} >/dev/null")
+        _log("\n".join(f"    sudo {c}" for c in service.enable_commands(init)))
+        return 1
+    if not (a.yes or service.confirm(f"Écrire {path} ?")):
+        return 1
+    path.write_text(text)
+    path.chmod(0o755 if init == "openrc" else 0o644)
+    _log(f"✓ {path} écrit. Pour activer :\n"
+         + "\n".join(f"    {c}" for c in service.enable_commands(init)))
+    return 0
+
+
+cmd_init.no_engine = True                 # tournent avant qu'il y ait un store
+cmd_install_service.no_engine = True
+
+
 def cmd_audit(a, e):
     """Unified timeline: who reached what, when, from where, and what changed.
     Reads existing logs with privileges the account already has (docker + wheel)."""
@@ -282,6 +327,7 @@ def cmd_audit(a, e):
 
 
 _FAMILIES = [
+    ("mise en place", ["init", "install-service"]),
     ("inventaire & santé", ["list", "status", "check", "doctor", "audit", "leaks"]),
     ("rotation & application", ["plan", "rotate", "apply", "render", "verify-render"]),
     ("valeurs", ["get", "set", "gen", "add", "run"]),
@@ -329,6 +375,14 @@ def build_parser():
     only = (("--only",), {})
     yes = (("--yes",), {"action": "store_true"})
 
+    add("init", "prépare l'hôte : crée le store (demande root une fois, en l'affichant)",
+        cmd_init, (("--dir",), {"default": "", "help": "autre emplacement du store, "
+                                "épinglé dans bv-secrets.ini (aucun root nécessaire)"}))
+    add("install-service", "génère et installe l'unité du worker (systemd ou OpenRC)",
+        cmd_install_service,
+        (("--init",), {"choices": ["systemd", "openrc"], "default": ""}),
+        (("--print",), {"dest": "print_only", "action": "store_true",
+                        "help": "écrit l'unité sur stdout, rien d'autre"}), yes)
     add("list", "secrets, formats, groupes, services cibles (aucune valeur)", cmd_list)
     add("check", "cohérence de la config, valeurs présentes, permissions", cmd_check)
     add("verify-render", "vérifie que render() reproduit les rendered actuels", cmd_verify_render)
@@ -386,7 +440,9 @@ def main():
         parser.print_help()
         return
     try:
-        sys.exit(args.func(args, Engine()) or 0)
+        # Setup commands run before there is a store or a secrets.conf to load.
+        engine = None if getattr(args.func, "no_engine", False) else Engine()
+        sys.exit(args.func(args, engine) or 0)
     except (ConfigError, RotateAborted) as e:
         sys.exit(str(e))
 

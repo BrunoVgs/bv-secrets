@@ -92,7 +92,6 @@
         <div><b>file</b><i>un fichier</i></div>
         <div><b>mysql</b><i>ALTER USER dans MariaDB</i></div>
         <div><b>cmd</b><i>une commande de l'app</i></div>
-        <div><b>linux</b><i>compte Linux, CLI seulement</i></div>
       </div>
       <div class="legcol"><h4>PASTILLE</h4>
         <div><b style="color:#3fbf5f">●</b><i>probe OK</i></div>
@@ -154,7 +153,7 @@
         <option value="all">toutes sources</option>
         <option value="access">accès (Caddy)</option>
         <option value="trail">actions (worker)</option>
-        <option value="host">hôte (ssh/doas)</option>
+        <option value="host">hôte (ssh/élévations)</option>
         <option value="rotdate">rotations</option>
       </select>
       <input class="search" id="auditService" placeholder="filtrer service / cible…">
@@ -168,7 +167,7 @@
       <div id="auditRows"></div>
     </div>
     <div class="cli">Lentille en lecture seule sur des logs qui existent déjà : accès Caddy
-      (qui a consulté quoi, refus), jobs du worker, connexions SSH/doas, dates de rotation.
+      (qui a consulté quoi, refus), jobs du worker, connexions SSH et élévations, dates de rotation.
       Aucune valeur de secret n'y figure. Le worker rafraîchit ce journal en continu — voir la
       fraîcheur ci-dessus.</div>
   </section>
@@ -197,14 +196,14 @@
 </dl></div></div>
 <h3>Concepts</h3>
 <dl>
-<dt>sinks</dt><dd><span class=k>env:svc#VAR</span> (fichier .env par service) · <span class=k>file:/chemin</span> · <span class=k>linux:user[@host]</span> (chpasswd) · <span class=k>mysql:user@conteneur</span> (ALTER USER) · <span class=k>cmd:…</span> (<span class=k>{value}</span> = nouvelle valeur, <span class=k>{AUTRE}</span> = autre secret).</dd>
+<dt>sinks</dt><dd><span class=k>env:svc#VAR</span> (fichier .env par service) · <span class=k>file:/chemin</span> · <span class=k>mysql:user@conteneur</span> (ALTER USER) · <span class=k>cmd:…</span> (<span class=k>{value}</span> = nouvelle valeur, <span class=k>{AUTRE}</span> = autre secret).</dd>
 <dt>groupes</dt><dd><span class=k>auto</span> = roté par défaut · <span class=k>app</span> / <span class=k>careful</span> = roté explicitement · <span class=k>manual</span> = jamais généré (posé à la main).</dd>
 <dt>computed</dt><dd>Secret dérivé d'autres (ex. <span class=k>AUTHSF_DATABASE_URL</span>, qui contient <span class=k>MARIADB_APP_PASSWORD</span>) — se recalcule tout seul.</dd>
 <dt>recréation</dt><dd>Un conteneur ne relit son <span class=k>env_file</span> qu'à la création : tout service ciblé par un sink <span class=k>env:</span> est donc <b>recréé</b> après application. Déduit des sinks, jamais déclaré à la main.</dd>
 <dt>probe</dt><dd>Commande de vérification déclarée par secret (<span class=k>doctor</span>) : teste la valeur contre la vraie app, exit 0 = ✓. Jamais destructif, n'affiche aucune valeur.</dd>
 <dt>worker</dt><dd>Le <b>seul</b> composant privilégié (docker + store rw). Le dashboard n'a aucun privilège : il dépose un job dans le spool, le worker l'exécute et renvoie un log <b>sans valeur</b>.</dd>
 <dt>accès</dt><dd>La carte <b>Accès</b> édite <span class=k>access/access.conf</span> (source unique « qui voit quoi ») ; le worker relance le rendu, recrée le reverse-proxy puis redémarre les services concernés.</dd>
-<dt>audit</dt><dd>Lentille en <b>lecture seule</b> sur des logs qui existent déjà : accès Caddy (IP, service, autorisé/refusé), trail des jobs du worker, connexions ssh/doas, dates de rotation. Pas de collecte ni de rétention. Les sources root (Caddy, syslog) restent lues par le CLI en privilégié ; le dashboard en affiche le dernier instantané daté.</dd>
+<dt>audit</dt><dd>Lentille en <b>lecture seule</b> sur des logs qui existent déjà : accès Caddy (IP, service, autorisé/refusé), trail des jobs du worker, connexions ssh et élévations (sudo/doas), dates de rotation. Pas de collecte ni de rétention. Les sources root (Caddy, log hôte) restent lues par le worker avec les droits qu'il a déjà ; le dashboard en affiche le dernier instantané daté.</dd>
 </dl>
     </div></div>
   </section>

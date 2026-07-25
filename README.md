@@ -40,6 +40,7 @@ cp bv-secrets.ini.example bv-secrets.ini  # optional: point it at your stack
 # run from the checkout with the shim, or install a real `bv-secrets` command:
 pipx install .               # -> bv-secrets on your PATH, still zero runtime deps
 
+bv-secrets init              # create the store (asks for root once, showing why)
 bin/bv-secrets list          # inventory, no values
 bin/bv-secrets status        # store vs what's deployed: synced / drift / not deployed
 bin/bv-secrets plan          # what a rotation would do
@@ -76,7 +77,7 @@ formatting stay byte-for-byte. `status` re-reads everything and flags what drift
 | `regex:/path#<pattern>` | group 1 of a pattern, any format | yes | yes |
 | `file:/path` | the whole file as the value | yes | yes |
 | `mysql:user@container` | a SQL password (`ALTER USER`) | no | yes |
-| `cmd:…` / `linux:user` | app command / Linux account | no | yes |
+| `cmd:…` | any command, `{value}` being the new value | no | yes |
 
 Structured writers are zero-dependency: they anchor on the key and replace the value
 in place, no library reserializes the file.
@@ -108,7 +109,7 @@ Nothing is written without `--yes`. A name with `API`/`TOKEN` becomes an `apikey
 | Access | your proxy's access log | who reached which service, allowed or denied |
 | Trail | worker spool | rotations, access changes, account edits |
 | Rotation | `meta.env` | when each secret was last set |
-| Host | syslog | SSH logins and `doas` elevations |
+| Host | syslog or journald | SSH logins and `sudo`/`doas` elevations |
 
 ```sh
 bv-secrets audit --since 24h                 # everything, last 24h, grouped by day
@@ -122,9 +123,13 @@ Privileges are lopsided on purpose.
 
 | Component | Where | Can do |
 |---|---|---|
-| CLI | host, interactive | store rw, `doas` for Linux accounts |
+| CLI | host, interactive | store rw |
 | Worker | host, service | docker + store rw, no inbound network |
 | Dashboard | container | read the store, drop jobs in a spool, nothing else |
+
+Nothing in the core elevates. `init` and `install-service` may ask for root once,
+from a terminal, printing the exact command before running it; the worker never
+prompts and never elevates.
 
 Values are never logged. `get` and `open` are the only commands that print one.
 
@@ -136,9 +141,16 @@ step and no network — the opposite of Vault. If your threat model needs the st
 encrypted at rest, this tool is not it (yet). `seal` covers the other case: an
 encrypted `store.enc` mirror you can carry off the machine for backup.
 
-**Host assumption.** Rotating Linux accounts shells out to `doas` (the only host
-elevation the tool uses), so a box needs it installed. Broader init/elevation
-portability is on the table, not done.
+**Host assumptions.** None beyond Python 3.11 and, for the container-facing sinks,
+docker. The worker runs under the account that installed it, on systemd or OpenRC,
+and the unit is generated rather than copied from a template:
+
+```sh
+bv-secrets install-service          # detects the init system, shows the unit
+```
+
+Setting a Linux account password is a `cmd:` sink, so the elevation is yours to
+choose: `cmd:sudo chpasswd <<< 'deploy:{value}'`.
 
 ## Architecture
 
@@ -183,16 +195,16 @@ portability is on the table, not done.
 
  ── AUDIT ──────────────────────────────────────────────────────────────────
    audit.py   read-only lens, stores nothing new
-   caddy access log · host syslog · worker spool · meta.env
+   caddy access log · host log (syslog|journal) · worker spool · meta.env
         └─► audit/digest.json  (rebuilt every minute)  ─►  dashboard timeline
 ```
 
 ## Configuration
 
 One file, `bv-secrets.ini`, sets everything. Any key can be overridden by the
-matching environment variable (same name, upper-case, `BV_` prefix), so Docker and
-OpenRC keep working: **env > file > default**. A bare machine with neither runs on
-defaults.
+matching environment variable (same name, upper-case, `BV_` prefix), so a container
+or a service unit keeps working: **env > file > default**. A bare machine with
+neither runs on defaults.
 
 ```ini
 [bv-secrets]
@@ -222,6 +234,8 @@ Completes subcommands, flags, and dynamically the secret names (`--only`, `get`,
 
 | Command | Effect |
 |---|---|
+| `init [--dir P]` | create the store; `--dir` pins another location, no root needed |
+| `install-service` | generate and install the worker unit (systemd or OpenRC) |
 | `list` | inventory: name, kind, group, presence, services |
 | `check` | config consistency, values present, `0600` perms |
 | `status [--only N]` | store vs deployed: synced / drift / not deployed |

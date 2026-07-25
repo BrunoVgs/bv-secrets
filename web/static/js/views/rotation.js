@@ -1,5 +1,5 @@
-/* Rotation: secrets rotatable from the web. `linux:` sinks are excluded, their
-   doas elevation being interactive and thus CLI-only. */
+/* Rotation: secrets rotatable from the web. Non-generatable kinds (apikey, opaque,
+   computed) and non-rotatable groups are counted apart, never offered. */
 import { rotate } from "../actions.js";
 import { $, bindAll, esc } from "../dom.js";
 import { dotColor, rel } from "../format.js";
@@ -12,7 +12,7 @@ function statsHtml(rotatable, blocked) {
   return [
     { label: "GROUPE AUTO", value: S.auto.length, color: "#ececec" },
     { label: "ROTABLES ICI", value: rotatable, color: "#ececec" },
-    { label: "CLI UNIQUEMENT", value: blocked, color: blocked ? "#d9a13b" : "#3fbf5f" },
+    { label: "NON ROTABLES", value: blocked, color: blocked ? "#d9a13b" : "#3fbf5f" },
   ].map((c, i) => `<div class="stat" style="--i:${i}"><div class="l">${c.label}</div>
       <div class="v" style="font-size:26px;color:${c.color}">${c.value}</div></div>`).join("");
 }

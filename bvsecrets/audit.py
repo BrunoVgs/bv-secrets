@@ -2,7 +2,7 @@
 retention, no secret value. Event = {ts, source, actor, target, outcome, detail}.
 
 The worker builds the full digest with the privileges it already has: Caddy log
-(root:0600) via `docker exec`, host syslog (root:wheel) read directly as bv.
+(root:0600) via `docker exec`, host log read directly (group-readable).
 """
 import configparser
 import datetime
@@ -15,7 +15,7 @@ import time
 from pathlib import Path
 
 from .config import (ACCESS_CONF, AUDIT_DIR, AUDIT_IGNORE_PREFIXES, CADDY_CONTAINER,
-                     CADDY_LOG_DIR, HOST_SYSLOG, SPOOL, WORKER_DIGEST)
+                     CADDY_LOG_DIR, SPOOL, WORKER_DIGEST, host_log_source)
 from .engine import Engine
 
 CACHE_LIMIT = 500
@@ -240,12 +240,15 @@ def rotdate_events(since: float = 0.0):
     return out
 
 
-# --- Host: sshd + doas from syslog ------------------------------------------ #
+# --- Host: sshd + elevations, from syslog or the journal -------------------- #
 _SYSLOG_TS = re.compile(r"^(\w{3}\s+\d+\s+\d+:\d+:\d+)\s")
 _SSH_OK = re.compile(r"Accepted \S+ for (\S+) from (\S+)")
 _SSH_KO = re.compile(r"(?:Failed \S+|Invalid user|authentication failure).* for (?:invalid user )?(\S+)"
                      r"(?: from (\S+))?")
-_DOAS = re.compile(r"doas(?:\[\d+\])?:\s*(.*)$")
+_ELEVATE = re.compile(r"\b(doas|sudo)(?:\[\d+\])?:\s*(.*)$")
+# sudo's PAM lines put the account in `user=`, not first as in a normal entry.
+_PAM_USER = re.compile(r"\buser=(\S+)")
+JOURNAL_WINDOW = "-7d"          # no cutoff given: don't walk a whole journal
 
 
 def _syslog_ts(line: str) -> float:
@@ -262,13 +265,28 @@ def _syslog_ts(line: str) -> float:
     return dt.timestamp()
 
 
+def _host_lines(since: float):
+    """Lines from whichever host log the box keeps. `journalctl -o short` emits the
+    same RFC 3164 shape as syslog, so everything below parses both unchanged."""
+    kind, path = host_log_source()
+    if kind == "file":
+        try:
+            yield from _read_lines(path)
+        except OSError:
+            return
+    elif kind == "journal":
+        when = (datetime.datetime.fromtimestamp(since).strftime("%Y-%m-%d %H:%M:%S")
+                if since else JOURNAL_WINDOW)
+        out = subprocess.run(["journalctl", "-o", "short", "--no-pager", "--since", when],
+                             capture_output=True).stdout
+        yield from out.decode(errors="ignore").splitlines()
+
+
 def host_events(since: float = 0.0):
-    """SSH logins (accepted/refused) and doas elevations."""
-    if not HOST_SYSLOG.exists():
-        return []
+    """SSH logins (accepted/refused) and privilege elevations (doas, sudo)."""
     out = []
-    for line in _read_lines(HOST_SYSLOG):
-        if "sshd" not in line and "doas" not in line:
+    for line in _host_lines(since):
+        if "sshd" not in line and "doas" not in line and "sudo" not in line:
             continue
         ts = _syslog_ts(line)
         if since and ts < since:
@@ -284,14 +302,18 @@ def host_events(since: float = 0.0):
                 out.append(event(ts, "host", m.group(2) or "?", m.group(1), "deny",
                                  f"connexion SSH refusée ({m.group(1)})"))
                 continue
-        d = _DOAS.search(line)
+        d = _ELEVATE.search(line)
         if d:
-            msg = d.group(1)
-            actor = msg.split()[0] if msg else "?"
-            failed = "fail" in msg.lower()
-            out.append(event(ts, "host", actor, "serveur (doas)",
+            tool, msg = d.group(1), d.group(2)
+            if msg.startswith("pam_"):
+                m = _PAM_USER.search(msg)
+                actor = m.group(1) if m else "?"
+            else:
+                actor = msg.split()[0] if msg else "?"
+            failed = "fail" in msg.lower() or "NOT in" in msg
+            out.append(event(ts, "host", actor, f"serveur ({tool})",
                              "deny" if failed else "change",
-                             "élévation doas refusée" if failed else "commande admin via doas"))
+                             f"élévation {tool} refusée" if failed else f"commande admin via {tool}"))
     return out
 
 

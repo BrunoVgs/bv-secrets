@@ -4,16 +4,10 @@ from bvsecrets import Engine, looks_like_apikey
 from bvsecrets.config import GEN_KINDS, ROTATE_GROUPS
 
 
-def has_linux_sink(cfg, name):
-    return any(s.startswith("linux:") for s in cfg.get(name, {}).get("sinks", []))
-
-
 def rotatable(cfg, name):
-    """Rotatable from the web: generatable, rotatable group, and no `linux:` sink
-    (whose doas elevation is interactive)."""
+    """Rotatable from the web: generatable kind, rotatable group."""
     c = cfg.get(name)
-    return bool(c) and c["kind"] in GEN_KINDS and c["group"] in ROTATE_GROUPS \
-        and not has_linux_sink(cfg, name)
+    return bool(c) and c["kind"] in GEN_KINDS and c["group"] in ROTATE_GROUPS
 
 
 def _row(engine, name, meta):
@@ -29,7 +23,6 @@ def _row(engine, name, meta):
         "sink_types": sorted({s.split(":", 1)[0] for s in c["sinks"]}),
         "note": c["note"],
         "rotatable": rotatable(engine.cfg, name),
-        "has_linux": has_linux_sink(engine.cfg, name),
         "probed": bool(c.get("probe")) or any(s.startswith(("mysql:", "env:")) for s in c["sinks"]),
         "last_set": meta.get(name, ""),
         "computed": c["kind"] == "computed",

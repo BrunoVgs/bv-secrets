@@ -1,8 +1,8 @@
 """Worker loop: drains the spool fed by the read-only web UI.
 
 The only privileged bv-secrets component (docker + store write), it runs on the
-host as `bv` with no inbound network. `linux:` sinks are refused here: doas
-elevation is interactive and stays CLI-only.
+host under the account that installed it, with no inbound network. It never
+elevates and never prompts: setup does that, once, from a TTY.
 """
 import json
 import sys
@@ -20,10 +20,6 @@ POLL_SECONDS = 2.0
 DIGEST_SECONDS = 60.0             # periodic audit-digest rebuild
 SECRET_ACTIONS = {"rotate", "apply", "doctor"}
 FLUSH_INTERVAL = 0.3
-
-
-def _has_linux(cfg, name):
-    return any(s.startswith("linux:") for s in cfg.get(name, {}).get("sinks", []))
 
 
 def write_result(jid, status, log, data):
@@ -59,10 +55,6 @@ def run_secret_action(job, action, emit):
     unknown = [n for n in only if n not in engine.cfg]
     if unknown:
         raise RuntimeError(f"secrets inconnus: {unknown}")
-    if action != "doctor":
-        blocked = [n for n in only if _has_linux(engine.cfg, n)]
-        if blocked:
-            raise RuntimeError(f"sinks linux -> CLI uniquement (élévation interactive): {blocked}")
     if not only:
         if action != "doctor":
             raise RuntimeError("aucune cible")

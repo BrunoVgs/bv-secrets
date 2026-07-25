@@ -8,15 +8,17 @@ with neither runs on defaults; a full stack sets the file once.
 import configparser
 import os
 import re
+import shutil
 from pathlib import Path
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
+CONFIG_FILE = Path(os.environ.get("BV_CONFIG") or PROJECT_DIR / "bv-secrets.ini")
 
 
 def _load_project_config() -> dict:
     """The `[bv-secrets]` section of the project INI, as a flat dict. Absent or
     unreadable file -> empty dict (a bare machine needs no config file)."""
-    path = Path(os.environ.get("BV_CONFIG") or PROJECT_DIR / "bv-secrets.ini")
+    path = CONFIG_FILE
     if not path.exists():
         return {}
     cp = configparser.ConfigParser(interpolation=None)
@@ -73,11 +75,31 @@ ACCESS_CONF = _path("BV_ACCESS_CONF", COMPOSE_DIR / "access" / "access.conf")
 # Apache...). Any executable implementing `set <svc> <roles>` and `all`.
 ACCESS_RENDER = _path("BV_ACCESS_RENDER", COMPOSE_DIR / "access" / "render-access.py")
 
-# Audit sources read by the worker with privileges it already has: Caddy log
-# (root:0600) via `docker exec`, host syslog (root:wheel) directly as bv.
+# Audit sources read by the worker with the privileges it already has: Caddy log
+# (root:0600) via `docker exec`, host log directly (group-readable: adm on Debian,
+# wheel on Alpine, systemd-journal for the journal).
 CADDY_LOG_DIR = _path("BV_CADDY_LOG_DIR", "/var/log/caddy")
 CADDY_CONTAINER = _setting("BV_CADDY_CONTAINER") or _setting("BV_PROXY_SERVICE") or "caddy"
-HOST_SYSLOG = _path("BV_HOST_SYSLOG", "/var/log/messages")
+
+# Distributions disagree on where sshd and elevations are logged, and a systemd box
+# may keep no file at all, so the source is resolved rather than assumed.
+# `host_syslog` forces one: a path, or the literal `journal`.
+HOST_LOG_CANDIDATES = ("/var/log/messages",     # Alpine, busybox syslogd
+                       "/var/log/auth.log",     # Debian, Ubuntu with rsyslog
+                       "/var/log/secure")       # RHEL, Fedora
+
+
+def host_log_source():
+    """-> ('file', Path) | ('journal', None) | (None, None) when the box logs
+    nowhere we can read. Readability decides: an existing but unreadable auth.log
+    (missing `adm` group) must not shadow a journal we can read."""
+    forced = _setting("BV_HOST_SYSLOG", "")
+    if forced:
+        return ("journal", None) if forced == "journal" else ("file", Path(forced))
+    for cand in HOST_LOG_CANDIDATES:
+        if os.access(cand, os.R_OK):
+            return "file", Path(cand)
+    return ("journal", None) if shutil.which("journalctl") else (None, None)
 
 # LOCAL-ONLY: no outbound SSH. Remote sinks are rejected (see Engine._apply_sink).
 
@@ -93,7 +115,7 @@ DEFAULT_LEN = {"password": 20, "hex": 32, "b64": 32, "userpass": 24, "passphrase
 
 # Engine-native sink types. Structured connectors (envfile/regex/json/yaml/ini/toml)
 # are validated separately against the locations writer registry (see Engine.check).
-SINK_TYPES = ("env", "file", "linux", "mysql", "cmd")
+SINK_TYPES = ("env", "file", "mysql", "cmd")
 # Roles strongest to weakest; the first one is the superuser (passes every gate).
 ROLES = [r.strip() for r in _setting("BV_ROLES", "admin,trusted,guest").split(",") if r.strip()]
 SUPERUSER = ROLES[0]
