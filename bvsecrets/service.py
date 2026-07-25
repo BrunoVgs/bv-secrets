@@ -54,9 +54,11 @@ def _systemd_unit() -> str:
     installer = shutil.which("install")
     pre = (f"ExecStartPre=+{installer} -d -m 0700 -o {user} -g {group} {spool}\n"
            if installer else "")
+    # docker is wanted, not required: a box using only file/config connectors has
+    # none, and `Requires=` on a missing unit refuses to start at all.
     return f"""[Unit]
 Description=bv-secrets spool worker
-Requires=docker.service
+Wants=docker.service
 After=docker.service network-online.target
 
 [Service]
@@ -103,7 +105,7 @@ if [ -f {ENV_FILE['openrc']} ]; then
 fi
 
 depend() {{
-	need docker
+	use docker
 	after net
 }}
 

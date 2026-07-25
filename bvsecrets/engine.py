@@ -8,6 +8,7 @@ import base64
 import configparser
 import grp
 import os
+import shutil
 import secrets as pysecrets
 import string
 import subprocess
@@ -541,15 +542,18 @@ class Engine:
             problems.append(f"STORE absent: {SECRETS_DIR} — le créer avec `bv-secrets init`")
         elif not os.access(SECRETS_DIR, os.W_OK):
             problems.append(f"STORE non inscriptible par ce compte: {SECRETS_DIR}")
-        groups = set()
-        for gid in os.getgroups():
-            try:
-                groups.add(grp.getgrgid(gid).gr_name)
-            except KeyError:          # gid without an entry (containers): not our business
-                pass
-        if "docker" not in groups and os.geteuid() != 0:
-            problems.append("GROUPE docker manquant pour ce compte : les sinks mysql/env "
-                            "et la recréation de conteneurs échoueront")
+        # Only a box that has docker can be missing the group; a file-only install
+        # has no business being told about it.
+        if shutil.which("docker") and os.geteuid() != 0:
+            groups = set()
+            for gid in os.getgroups():
+                try:
+                    groups.add(grp.getgrgid(gid).gr_name)
+                except KeyError:      # gid without an entry (containers): not our business
+                    pass
+            if "docker" not in groups:
+                problems.append("GROUPE docker manquant pour ce compte : les sinks mysql "
+                                "et la recréation de conteneurs échoueront")
         kind, _ = host_log_source()
         if not kind:
             problems.append("AUDIT source hôte introuvable (ni syslog ni journalctl lisible) : "

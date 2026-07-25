@@ -41,6 +41,14 @@ class TestUnitGeneration(unittest.TestCase):
         self.assertIn(f"ExecStart={sys.executable} -u -m bvsecrets.worker.loop", text)
         self.assertIn(f"WorkingDirectory={ROOT}", text)
 
+    def test_docker_is_a_soft_dependency(self):
+        # A box using only file/config connectors has no docker; a hard dependency
+        # would keep the unit from starting at all.
+        self.assertNotIn("Requires=docker", self.unit("systemd"))
+        self.assertIn("Wants=docker.service", self.unit("systemd"))
+        self.assertNotIn("need docker", self.unit("openrc"))
+        self.assertIn("use docker", self.unit("openrc"))
+
     def test_systemd_spool_follows_the_configured_store(self):
         self.assertIn("/tmp/elsewhere/spool", self.unit("systemd", store="/tmp/elsewhere"))
 
