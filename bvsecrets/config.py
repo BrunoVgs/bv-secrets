@@ -12,7 +12,25 @@ import shutil
 from pathlib import Path
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
-CONFIG_FILE = Path(os.environ.get("BV_CONFIG") or PROJECT_DIR / "bv-secrets.ini")
+XDG_DIR = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "bv-secrets"
+
+
+def _project_file(env: str, filename: str) -> Path:
+    """Where a project file lives: the env override, then the current directory,
+    then ~/.config/bv-secrets, then next to the code. That last one is the git
+    checkout; a pip/pipx install lands in site-packages, where nobody edits
+    anything, so cwd and XDG are what make an installed `bv-secrets` usable at
+    all. Absent everywhere, point at the place the user should create it."""
+    forced = os.environ.get(env)
+    if forced:
+        return Path(forced)
+    for candidate in (Path.cwd() / filename, XDG_DIR / filename, PROJECT_DIR / filename):
+        if candidate.exists():
+            return candidate
+    return (PROJECT_DIR if (PROJECT_DIR / f"{filename}.example").exists() else XDG_DIR) / filename
+
+
+CONFIG_FILE = _project_file("BV_CONFIG", "bv-secrets.ini")
 
 
 def _load_project_config() -> dict:
@@ -65,10 +83,10 @@ SPOOL = SECRETS_DIR / "spool"
 AUDIT_DIR = SECRETS_DIR / "audit"
 WORKER_DIGEST = AUDIT_DIR / "digest.json"
 
-CONF = _path("BV_SECRETS_CONF", PROJECT_DIR / "secrets.conf")
-# Project sits under the compose root by default, so `recreate`/`leaks` target the
-# right place with no config.
-COMPOSE_DIR = _path("BV_COMPOSE_DIR", PROJECT_DIR.parent)
+CONF = _path("BV_SECRETS_CONF", _project_file("BV_SECRETS_CONF", "secrets.conf"))
+# The declaration file sits under the compose root by default, so `recreate` and
+# `leaks` target the right place with no config.
+COMPOSE_DIR = _path("BV_COMPOSE_DIR", CONF.parent.parent)
 COMPOSE_FILE = COMPOSE_DIR / "docker-compose.yaml"
 ACCESS_CONF = _path("BV_ACCESS_CONF", COMPOSE_DIR / "access" / "access.conf")
 # Renderer that turns the matrix into whatever enforces access (Caddy, nginx,

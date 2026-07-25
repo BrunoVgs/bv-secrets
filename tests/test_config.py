@@ -2,9 +2,15 @@
 permet a Docker (env) de surcharger un bv-secrets.ini committe, et a une machine
 nue de tourner sur les defauts."""
 import os
+import subprocess
+import sys
+import tempfile
 import unittest
+from pathlib import Path
 
 from bvsecrets import config
+
+ROOT = Path(__file__).resolve().parent.parent
 
 
 class TestPrecedence(unittest.TestCase):
@@ -41,6 +47,40 @@ class TestPrecedence(unittest.TestCase):
     def test_file_key_is_env_name_without_bv_prefix(self):
         config._FILE = {"roles": "a,b,c"}
         self.assertEqual(config._setting("BV_ROLES", "x"), "a,b,c")
+
+
+class TestProjectFileResolution(unittest.TestCase):
+    """Une CLI installee (pip/pipx) vit dans site-packages, ou personne n'edite
+    rien : sans recherche dans le repertoire courant et dans ~/.config, la
+    commande installee ne trouve jamais de config. Resolution a l'import, donc
+    chaque cas passe par un sous-processus."""
+
+    def resolve(self, cwd, **env):
+        r = subprocess.run(
+            [sys.executable, "-c", "from bvsecrets.config import CONF; print(CONF)"],
+            cwd=cwd, capture_output=True, text=True,
+            env={**os.environ, "PYTHONPATH": str(ROOT), **env})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return r.stdout.strip()
+
+    def test_current_directory_wins_over_the_checkout(self):
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "secrets.conf").write_text("")
+            self.assertEqual(self.resolve(d), str(Path(d) / "secrets.conf"))
+
+    def test_xdg_config_home_when_the_directory_has_none(self):
+        with tempfile.TemporaryDirectory() as d:
+            xdg = Path(d) / "cfg" / "bv-secrets"
+            xdg.mkdir(parents=True)
+            (xdg / "secrets.conf").write_text("")
+            self.assertEqual(self.resolve(d, XDG_CONFIG_HOME=str(Path(d) / "cfg")),
+                             str(xdg / "secrets.conf"))
+
+    def test_env_wins_over_everything(self):
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "secrets.conf").write_text("")
+            forced = Path(d) / "ailleurs.conf"
+            self.assertEqual(self.resolve(d, BV_SECRETS_CONF=str(forced)), str(forced))
 
 
 class TestApikeyHeuristic(unittest.TestCase):

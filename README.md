@@ -219,6 +219,11 @@ See [`bv-secrets.ini.example`](bv-secrets.ini.example) for every key. Left empty
 feature turns off rather than aiming at a random service. The dashboard reads its own
 password from `BV_DASH_PASSWORD` in the container (a secret, never committed).
 
+`secrets.conf` and `bv-secrets.ini` are looked up in that order: `$BV_SECRETS_CONF`
+/ `$BV_CONFIG`, then the current directory, then `~/.config/bv-secrets/`, then the
+checkout. So a `pipx`-installed `bv-secrets` works from anywhere, with its config
+in `~/.config/bv-secrets/` or in the directory you run it from.
+
 ## Shell completion
 
 ```sh

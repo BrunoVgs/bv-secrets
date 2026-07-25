@@ -19,7 +19,7 @@ import sys
 from pathlib import Path
 
 from . import locations
-from .config import CONFIG_FILE, PROJECT_DIR, SECRETS_DIR
+from .config import CONF, CONFIG_FILE, PROJECT_DIR, SECRETS_DIR
 from .engine import ConfigError
 
 SERVICE = "bvsecrets-worker"
@@ -64,7 +64,7 @@ After=docker.service network-online.target
 [Service]
 User={user}
 Group={group}
-WorkingDirectory={PROJECT_DIR}
+WorkingDirectory={CONF.parent}
 Environment=PYTHONPATH={PROJECT_DIR}
 EnvironmentFile=-{ENV_FILE['systemd']}
 {pre}ExecStart={sys.executable} -u -m bvsecrets.worker.loop
@@ -91,7 +91,7 @@ command="{sys.executable}"
 command_args="-u -m bvsecrets.worker.loop"
 command_user="{user}:{group}"
 command_background="yes"
-directory="{PROJECT_DIR}"
+directory="{CONF.parent}"
 pidfile="/run/{SERVICE}.pid"
 
 export PYTHONPATH="{PROJECT_DIR}"
