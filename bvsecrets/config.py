@@ -13,6 +13,9 @@ from pathlib import Path
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 XDG_DIR = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "bv-secrets"
+# Starter config written by `init`. Ships inside the package, so an install with
+# no checkout has something to start from.
+TEMPLATE = Path(__file__).resolve().parent / "secrets.conf.example"
 
 
 def _project_file(env: str, filename: str) -> Path:
@@ -27,7 +30,8 @@ def _project_file(env: str, filename: str) -> Path:
     for candidate in (Path.cwd() / filename, XDG_DIR / filename, PROJECT_DIR / filename):
         if candidate.exists():
             return candidate
-    return (PROJECT_DIR if (PROJECT_DIR / f"{filename}.example").exists() else XDG_DIR) / filename
+    checkout = (PROJECT_DIR / "pyproject.toml").exists()
+    return (PROJECT_DIR if checkout else XDG_DIR) / filename
 
 
 CONFIG_FILE = _project_file("BV_CONFIG", "bv-secrets.ini")

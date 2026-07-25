@@ -19,7 +19,7 @@ import sys
 from pathlib import Path
 
 from . import locations
-from .config import CONF, CONFIG_FILE, PROJECT_DIR, SECRETS_DIR
+from .config import CONF, CONFIG_FILE, PROJECT_DIR, SECRETS_DIR, TEMPLATE
 from .engine import ConfigError
 
 SERVICE = "bvsecrets-worker"
@@ -82,7 +82,7 @@ def _openrc_unit() -> str:
 # Worker bv-secrets — le seul composant privilégié du système.
 # Tourne sous {user} (docker + store rw), sans réseau entrant. Il vide le spool
 # alimenté par l'UI web read-only et exécute rotate/apply/doctor.
-# Généré par `bv-secrets install-service` : ne pas éditer, régénérer.
+# Généré par `bv-secrets init` : ne pas éditer, régénérer.
 
 name="{SERVICE}"
 description="bv-secrets spool worker (rotate/apply executor)"
@@ -123,6 +123,26 @@ def unit_text(init: str) -> str:
     raise ConfigError("init système non reconnu (ni systemd ni OpenRC) : "
                       "lancer le worker à la main avec "
                       f"`{sys.executable} -u -m bvsecrets.worker.loop`")
+
+
+def install_unit(init: str, yes: bool, log=print) -> int:
+    """Write the generated unit. Root: writes it after a confirmation. Otherwise
+    prints the unit and the exact commands, and touches nothing."""
+    text = unit_text(init)
+    path = UNIT_PATH[init]
+    log(f"\n--- {path} ---\n{text}")
+    if os.geteuid() != 0:
+        log("Pas les droits root pour poser l'unité. À lancer :\n"
+            f"    bv-secrets init --unit {init} | sudo tee {path} >/dev/null")
+        log("\n".join(f"    sudo {c}" for c in enable_commands(init)))
+        return 1
+    if not (yes or confirm(f"Écrire {path} ?")):
+        return 1
+    path.write_text(text)
+    path.chmod(0o755 if init == "openrc" else 0o644)
+    log(f"✓ {path} écrit. Pour activer :\n"
+        + "\n".join(f"    {c}" for c in enable_commands(init)))
+    return 0
 
 
 def enable_commands(init: str) -> list:
@@ -187,7 +207,23 @@ def pin_secrets_dir(path: Path):
         lines.append("[bv-secrets]\n")
         head = len(lines) - 1
     lines.insert(head + 1, f"secrets_dir = {path}\n")
+    CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)   # ~/.config/bv-secrets
     CONFIG_FILE.write_text("".join(lines))
+
+
+def create_conf(path: Path, log=print) -> int:
+    """Write the starter secrets.conf from the packaged template. Never overwrite:
+    the file is the source of truth and the worker rewrites it from the UI."""
+    if path.exists():
+        log(f"config déjà présente : {path}")
+        return 0
+    if not TEMPLATE.exists():
+        log(f"! modèle introuvable ({TEMPLATE}) : créer {path} à la main")
+        return 1
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(TEMPLATE.read_text(encoding="utf-8"), encoding="utf-8")
+    log(f"✓ config créée depuis le modèle : {path}")
+    return 0
 
 
 def create_store(path: Path, log=print) -> int:

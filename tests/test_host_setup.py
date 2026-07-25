@@ -28,8 +28,7 @@ class TestUnitGeneration(unittest.TestCase):
     resolus, interpreteur en cours."""
 
     def unit(self, init, store="/tmp/bv-store"):
-        r = run_cli("install-service", "--init", init, "--print",
-                    BV_SECRETS_DIR=store)
+        r = run_cli("init", "--unit", init, BV_SECRETS_DIR=store)
         self.assertEqual(r.returncode, 0, r.stderr)
         return r.stdout
 
@@ -61,6 +60,36 @@ class TestUnitGeneration(unittest.TestCase):
         # maintenir quand une cle de config apparait.
         self.assertIn("set -a", text)
         subprocess.run(["sh", "-n"], input=text, text=True, check=True)
+
+
+class TestInitIsTheWholeInstall(unittest.TestCase):
+    """Une seule commande pour une premiere installation : store, config de
+    depart, service. Idempotente, et sans root quand rien ne l'exige."""
+
+    def test_creates_store_and_config_in_one_go(self):
+        with tempfile.TemporaryDirectory() as d:
+            store, conf = Path(d) / "store", Path(d) / "secrets.conf"
+            r = run_cli("init", "--dir", str(store), "--no-service",
+                        BV_SECRETS_CONF=str(conf), BV_CONFIG=str(Path(d) / "bv.ini"))
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertTrue((store / "spool").is_dir())
+            self.assertTrue(conf.exists())
+            self.assertIn("[APP_ADMIN_PASSWORD]", conf.read_text())   # bien le modele
+            # secrets_dir epingle : la commande suivante retrouve le store seule
+            self.assertIn(str(store), (Path(d) / "bv.ini").read_text())
+
+            again = run_cli("init", "--dir", str(store), "--no-service",
+                            BV_SECRETS_CONF=str(conf), BV_CONFIG=str(Path(d) / "bv.ini"))
+            self.assertEqual(again.returncode, 0, again.stderr)
+            self.assertIn("déjà présent", again.stdout)
+
+    def test_never_overwrites_an_existing_config(self):
+        with tempfile.TemporaryDirectory() as d:
+            conf = Path(d) / "secrets.conf"
+            conf.write_text("[MINE]\nkind = password\n")
+            run_cli("init", "--dir", str(Path(d) / "store"), "--no-service",
+                    BV_SECRETS_CONF=str(conf), BV_CONFIG=str(Path(d) / "bv.ini"))
+            self.assertEqual(conf.read_text(), "[MINE]\nkind = password\n")
 
 
 class TestRemovedLinuxSink(unittest.TestCase):

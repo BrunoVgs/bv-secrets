@@ -21,3 +21,8 @@ bv-secrets = "bvsecrets.cli:main"
 
 [tool.setuptools]
 packages = ["bvsecrets", "bvsecrets.locations", "bvsecrets.worker"]
+
+# `init` writes the starter secrets.conf from this template, so it must ship with
+# the package: an install without a checkout has nothing else to start from.
+[tool.setuptools.package-data]
+bvsecrets = ["secrets.conf.example"]

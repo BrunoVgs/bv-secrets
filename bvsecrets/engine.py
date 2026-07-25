@@ -43,7 +43,7 @@ class Engine:
         if not CONF.exists():
             raise ConfigError(
                 f"config introuvable: {CONF}\n"
-                f"Partir du modèle : cp secrets.conf.example secrets.conf")
+                f"La créer depuis le modèle : bv-secrets init")
         cp.read(CONF)
         out = {}
         for name in cp.sections():

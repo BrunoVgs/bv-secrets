@@ -25,7 +25,7 @@ runs on a bare box.
 
 | What | Source of truth | Reaches |
 |---|---|---|
-| Secrets & rotation | `secrets.conf` | env & config files, DB & Linux login passwords, app commands |
+| Secrets & rotation | `secrets.conf` | env & config files, SQL passwords, app commands |
 | Accounts | your app's SQL database | user roles and deletion, from the tool |
 | Access | `access.conf` | your reverse proxy (Caddy, nginx, Apache) |
 | Audit | logs the box already writes | one read-only timeline |
@@ -33,20 +33,26 @@ runs on a bare box.
 ## Quickstart
 
 ```sh
-git clone https://github.com/BrunoVgs/bv-secrets.git && cd bv-secrets
-cp secrets.conf.example  secrets.conf     # describe your secrets
-cp bv-secrets.ini.example bv-secrets.ini  # optional: point it at your stack
+pipx install git+https://github.com/BrunoVgs/bv-secrets.git   # zero runtime deps
 
-# run from the checkout with the shim, or install a real `bv-secrets` command:
-pipx install .               # -> bv-secrets on your PATH, still zero runtime deps
+bv-secrets init              # store, starter config, worker service — one command
+$EDITOR ~/.config/bv-secrets/secrets.conf                     # describe your secrets
 
-bv-secrets init              # create the store (asks for root once, showing why)
-bin/bv-secrets list          # inventory, no values
-bin/bv-secrets status        # store vs what's deployed: synced / drift / not deployed
-bin/bv-secrets plan          # what a rotation would do
-bin/bv-secrets rotate --yes  # regenerate + apply the auto group, with rollback
-bin/bv-secrets doctor        # does each value actually WORK?
+bv-secrets list              # inventory, no values
+bv-secrets status            # store vs what's deployed: synced / drift / not deployed
+bv-secrets plan              # what a rotation would do
+bv-secrets rotate --yes      # regenerate + apply the auto group, with rollback
+bv-secrets doctor            # does each value actually WORK?
 ```
+
+`init` is the whole install and every step of it is idempotent: it creates the
+store (asking for root once, showing the exact command), writes the starter
+config if there is none, and generates the worker's systemd or OpenRC unit for
+the account you ran it from. `--dir` puts the store somewhere you own and needs
+no root at all; `--no-service` skips the init system entirely.
+
+From a clone instead, `git clone … && cd bv-secrets && bin/bv-secrets init` does
+the same, with the config in the checkout.
 
 `status`, `list`, `check` and `import` need nothing but the store and `secrets.conf`,
 so you can declare and watch a box that has nothing deployed yet.
@@ -127,9 +133,9 @@ Privileges are lopsided on purpose.
 | Worker | host, service | docker + store rw, no inbound network |
 | Dashboard | container | read the store, drop jobs in a spool, nothing else |
 
-Nothing in the core elevates. `init` and `install-service` may ask for root once,
-from a terminal, printing the exact command before running it; the worker never
-prompts and never elevates.
+Nothing in the core elevates. `init` may ask for root once, from a terminal,
+printing the exact command before running it; the worker never prompts and never
+elevates.
 
 Values are never logged. `get` and `open` are the only commands that print one.
 
@@ -143,11 +149,8 @@ encrypted `store.enc` mirror you can carry off the machine for backup.
 
 **Host assumptions.** None beyond Python 3.11 and, for the container-facing sinks,
 docker. The worker runs under the account that installed it, on systemd or OpenRC,
-and the unit is generated rather than copied from a template:
-
-```sh
-bv-secrets install-service          # detects the init system, shows the unit
-```
+and `init` generates its unit rather than copying a template you have to edit
+(`bv-secrets init --unit systemd` prints it without installing anything).
 
 Setting a Linux account password is a `cmd:` sink, so the elevation is yours to
 choose: `cmd:sudo chpasswd <<< 'deploy:{value}'`.
@@ -239,8 +242,7 @@ Completes subcommands, flags, and dynamically the secret names (`--only`, `get`,
 
 | Command | Effect |
 |---|---|
-| `init [--dir P]` | create the store; `--dir` pins another location, no root needed |
-| `install-service` | generate and install the worker unit (systemd or OpenRC) |
+| `init [--dir P]` | first install: store, starter config, worker unit |
 | `list` | inventory: name, kind, group, presence, services |
 | `check` | config consistency, values present, `0600` perms |
 | `status [--only N]` | store vs deployed: synced / drift / not deployed |
@@ -301,6 +303,8 @@ bvsecrets/          engine shared by CLI, worker and web
   adopt.py            secret detection in a config file
   audit.py            audit lens over existing logs
   cli.py              command line
+  service.py          host setup: store, starter config, generated unit
+  secrets.conf.example  template `init` writes, shipped with the package
   worker/             privileged spool executor + audit digest
 completions/        bash + zsh completion scripts
 web/                dashboard (read-only)
