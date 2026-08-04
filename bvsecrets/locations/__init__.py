@@ -16,8 +16,9 @@ Adressage : ``scheme:target#selector``
     yaml:/chemin/conf.yaml#a.b.c      un scalaire a un chemin YAML
     ini:/chemin/conf.ini#section.cle  une cle dans une section INI
     toml:/chemin/conf.toml#a.b.c      une cle dans une table TOML
+    sqlite:/base.db@ctr#t.col?id=1    une cellule, la condition visant UNE ligne
 """
-from . import envfile, structured, text
+from . import db, envfile, structured, text
 from .base import LocationError, atomic_write, split
 
 _READERS = {
@@ -28,6 +29,7 @@ _READERS = {
     "yaml": structured.yaml_read,
     "ini": structured.ini_read,
     "toml": structured.toml_read,
+    "sqlite": db.read,
 }
 _WRITERS = {
     "envfile": envfile.write,
@@ -37,6 +39,7 @@ _WRITERS = {
     "yaml": structured.yaml_write,
     "ini": structured.ini_write,
     "toml": structured.toml_write,
+    "sqlite": db.write,
 }
 
 

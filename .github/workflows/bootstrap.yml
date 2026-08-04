@@ -1,0 +1,100 @@
+name: Bootstrap
+
+# Proves the install works for someone who is not the author: a fresh box, a fresh
+# unprivileged account, no pre-existing store, no root. Alpine and Void are the two
+# targets; Debian is kept as a sanity check that the distro detection is not a
+# two-case special case.
+#
+# Docker and Caddy are deliberately not started here: a container cannot run the
+# daemon or the init system. What is proven is package detection, the unprivileged
+# install path, and that bv-secrets is usable end to end afterwards.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  fresh-install:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - distro: alpine
+            image: alpine:3.24
+            setup: apk add --no-cache python3 shadow sudo
+          - distro: void
+            image: ghcr.io/void-linux/void-linux:latest-full-x86_64
+            setup: xbps-install -Suy python3 shadow sudo
+          - distro: debian
+            image: debian:stable-slim
+            setup: apt-get update -qq && apt-get install -y -qq python3 passwd sudo
+    container:
+      image: ${{ matrix.image }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Base tooling
+        run: ${{ matrix.setup }}
+
+      - name: Create an unprivileged account
+        run: |
+          useradd -m -s /bin/sh tester 2>/dev/null || adduser -D -s /bin/sh tester
+          cp -a "$GITHUB_WORKSPACE" /home/tester/bv-secrets
+          chown -R tester:tester /home/tester
+
+      # --check must describe the box without touching it, and must not fail the
+      # run merely because docker is absent from a build container.
+      - name: Report what is missing
+        run: su tester -c 'cd ~/bv-secrets && ./deploy/bootstrap.sh --check' || true
+
+      - name: Install as that user, with no root and no service
+        run: su tester -c 'cd ~/bv-secrets && ./deploy/bootstrap.sh --no-packages --no-service'
+
+      - name: The store landed under HOME, 0700, and never in /opt
+        run: |
+          su tester -c 'test -d ~/.local/share/bv-secrets' \
+            || { echo "store absent sous HOME"; exit 1; }
+          mode=$(su tester -c 'stat -c %a ~/.local/share/bv-secrets')
+          [ "$mode" = 700 ] || { echo "store en $mode, attendu 700"; exit 1; }
+          test ! -e /opt/bv-secrets || { echo "/opt touche sans root"; exit 1; }
+
+      - name: A random user can actually drive it
+        run: |
+          su tester -c 'cd ~/bv-secrets && export PATH=$HOME/.local/bin:$PATH && set -e
+            bv-secrets list
+            bv-secrets check
+            bv-secrets elevation --rules | grep -q bv_elevation
+            printf "API_TOKEN_X=abcdef0123456789abcdef0123456789\nDB_HOST=localhost\n" > /tmp/app.env
+            bv-secrets adopt /tmp/app.env --yes
+            bv-secrets list | grep -q API_TOKEN_X
+            bv-secrets list --flat | grep -q API_TOKEN_X'
+
+      - name: Adoption classified the token as a third-party key, not a password
+        run: |
+          su tester -c 'cd ~/bv-secrets && export PATH=$HOME/.local/bin:$PATH
+            python3 -c "
+from bvsecrets import Engine
+from bvsecrets.config import CLASS_APIKEY, secret_class
+c = Engine().cfg[\"API_TOKEN_X\"]
+got = secret_class(c[\"kind\"], c[\"group\"], \"API_TOKEN_X\")
+assert got == CLASS_APIKEY, got
+assert c[\"kind\"] == \"apikey\", c[\"kind\"]
+print(\"API_TOKEN_X ->\", got)
+"'
+
+      - name: Re-running changes nothing
+        run: su tester -c 'cd ~/bv-secrets && ./deploy/bootstrap.sh --no-packages --no-service'
+
+      - name: Unit suite on the target distro
+        run: su tester -c 'cd ~/bv-secrets && python3 -m unittest discover -s tests -t .'
+
+  shell-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck dash
+      - name: POSIX sh compliance
+        run: dash -n deploy/bootstrap.sh
+      - run: shellcheck -s sh deploy/bootstrap.sh

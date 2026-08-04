@@ -1,9 +1,11 @@
 """Connecteurs de localisation : lecture, round-trip et surtout ecriture
 chirurgicale — seule la valeur ciblee change, tout le reste est preserve."""
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
 
+from bvsecrets.engine import sink_service
 from bvsecrets.locations import LocationError, read_location, write_location
 
 
@@ -124,6 +126,90 @@ class TestFile(unittest.TestCase):
 
     def test_read_absent_is_none(self):
         self.assertIsNone(read_location(f"file:{self.path}"))
+
+
+class TestSqlite(unittest.TestCase):
+    """Le garde-fou du connecteur `sqlite` : une table n'a pas d'ancre textuelle,
+    donc c'est la condition qui tient lieu d'adresse et elle doit viser une ligne
+    et une seule, en lecture comme en ecriture."""
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.path = Path(self.dir.name) / "app.db"
+        con = sqlite3.connect(self.path)
+        con.executescript(
+            "CREATE TABLE monitor (id INTEGER PRIMARY KEY, name TEXT, token TEXT);"
+            "INSERT INTO monitor VALUES (1, 'import', 'old');"
+            "INSERT INTO monitor VALUES (2, 'jumeau', 'autre');"
+            "INSERT INTO monitor VALUES (3, 'jumeau', 'encore');")
+        con.commit()
+        con.close()
+
+    def tearDown(self):
+        self.dir.cleanup()
+
+    def _loc(self, selector="monitor.token?id=1"):
+        return f"sqlite:{self.path}#{selector}"
+
+    def _rows(self):
+        con = sqlite3.connect(self.path)
+        rows = con.execute("SELECT id, name, token FROM monitor ORDER BY id").fetchall()
+        con.close()
+        return rows
+
+    def test_roundtrip(self):
+        write_location(self._loc(), "NEWVALUE123")
+        self.assertEqual(read_location(self._loc()), "NEWVALUE123")
+
+    def test_neighbours_untouched(self):
+        write_location(self._loc(), "NEWVALUE123")
+        self.assertEqual(self._rows()[1:],
+                         [(2, "jumeau", "autre"), (3, "jumeau", "encore")])
+
+    def test_where_on_a_text_column(self):
+        self.assertEqual(read_location(self._loc("monitor.token?name=import")), "old")
+
+    def test_quote_in_value_is_not_injection(self):
+        write_location(self._loc(), "a'; DROP TABLE monitor; --")
+        self.assertEqual(read_location(self._loc()), "a'; DROP TABLE monitor; --")
+        self.assertEqual(len(self._rows()), 3)
+
+    def test_ambiguous_where_refuses_to_write(self):
+        with self.assertRaises(LocationError):
+            write_location(self._loc("monitor.token?name=jumeau"), "v")
+        self.assertEqual(self._rows()[1][2], "autre")
+
+    def test_ambiguous_where_refuses_to_read(self):
+        with self.assertRaises(LocationError):
+            read_location(self._loc("monitor.token?name=jumeau"))
+
+    def test_no_match_reads_none_and_refuses_to_write(self):
+        self.assertIsNone(read_location(self._loc("monitor.token?id=99")))
+        with self.assertRaises(LocationError):
+            write_location(self._loc("monitor.token?id=99"), "v")
+
+    def test_absent_database_is_none(self):
+        self.assertIsNone(read_location(f"sqlite:{self.path}.nope#monitor.token?id=1"))
+
+    def test_malformed_selector(self):
+        for bad in ["monitor.token", "monitor?id=1", "monitor.token?id"]:
+            with self.assertRaises(LocationError):
+                read_location(self._loc(bad))
+
+
+class TestSinkService(unittest.TestCase):
+    """Le service a recreer se DEDUIT du sink, il ne se declare jamais."""
+
+    def test_derived(self):
+        self.assertEqual(sink_service("env:pihole#FTLCONF_X"), "pihole")
+        self.assertEqual(
+            sink_service("sqlite:/app/data/kuma.db@uptime-kuma#monitor.token?id=1"),
+            "uptime-kuma")
+
+    def test_none_when_nothing_to_recreate(self):
+        self.assertIsNone(sink_service("envfile:/home/bv/x.sh#TOKEN"))
+        self.assertIsNone(sink_service("sqlite:/srv/local.db#t.col?id=1"))
+        self.assertIsNone(sink_service("file:/srv/key"))
 
 
 class TestErrors(unittest.TestCase):

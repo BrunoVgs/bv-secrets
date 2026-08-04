@@ -57,6 +57,26 @@ the same, with the config in the checkout.
 `status`, `list`, `check` and `import` need nothing but the store and `secrets.conf`,
 so you can declare and watch a box that has nothing deployed yet.
 
+## Bootstrap a new box
+
+`deploy/bootstrap.sh` installs docker, compose, caddy and bv-secrets on a fresh
+machine. POSIX sh, idempotent, distro-aware (Alpine `apk`, Void `xbps`, Debian and
+Ubuntu `apt`). It needs root only for the packages: without it the store falls back
+under `$HOME` instead of `/opt`, so an unprivileged install still ends up working.
+
+```sh
+./deploy/bootstrap.sh                 # full install
+./deploy/bootstrap.sh --check         # report what is missing, change nothing
+./deploy/bootstrap.sh --no-packages   # already provisioned
+./deploy/bootstrap.sh --store DIR     # store somewhere other than /opt/bv-secrets
+```
+
+The `Bootstrap` workflow runs this same file in clean Alpine, Void and Debian
+containers, as a freshly created unprivileged account, then drives the result:
+`list`, `check`, `adopt`, and a check that an adopted `API_TOKEN` lands in the
+third-party-key family rather than among the rotatable passwords. The install path
+is therefore tested as a stranger would meet it, not as the author remembers it.
+
 ## Rotation
 
 `rotate` changes the string **and** everything using it: the SQL user is `ALTER`ed,
@@ -122,6 +142,41 @@ bv-secrets audit --since 24h                 # everything, last 24h, grouped by 
 bv-secrets audit --source access --denied    # only refused accesses
 bv-secrets audit --ip 10.8.0.5 --json        # one client, machine-readable
 ```
+
+### Elevation trail
+
+`elevation` answers a narrower question in far more detail: who became root, when,
+through which command, and what surrounded it.
+
+auditd is the authority here rather than syslog, because it also records elevation
+from cron, scripts and containers, which no shell history sees. The history only
+supplies the surrounding commands.
+
+```sh
+bv-secrets elevation --rules | sudo tee /etc/audit/rules.d/50-bv-elevation.rules
+sudo augenrules --load                       # or: service auditd restart
+
+bv-secrets elevation --since 24h             # the report
+bv-secrets elevation --window 6 --json       # wider context, machine-readable
+bv-secrets elevation --context atuin         # cwd and exit code, if atuin is installed
+```
+
+```
+2026-08-02 22:36:14  bv -> root  doas  micro /opt/bv-secrets/pihole.env
+    avant  22:35:51  cd /opt/bv-secrets
+    avant  22:36:09  grep FTLCONF pihole.env
+    ELEVATION  uid=1000 -> euid=0  pid=14822  ppid=14401  tty=pts3
+    apres  22:37:30  docker compose up -d --force-recreate pihole
+```
+
+Reading needs no privilege: the log is group-readable (`adm` on Debian and Ubuntu,
+`wheel` on Alpine once `log_group` says so). When it is not readable the command
+fails loudly instead of reporting an empty result, since a lens that answers
+"nothing happened" while blind is worse than no lens.
+
+Context providers: `zsh-history` (default, no dependency, needs `EXTENDED_HISTORY`)
+and `atuin` (adds exit code and directory). The atuin store is read through its CLI,
+never through its SQLite file, whose schema is explicitly unstable upstream.
 
 ## Security model
 
@@ -243,6 +298,8 @@ Completes subcommands, flags, and dynamically the secret names (`--only`, `get`,
 | Command | Effect |
 |---|---|
 | `init [--dir P]` | first install: store, starter config, worker unit |
+| `migrate-conf [--in-place] --yes` | convert an old INI declaration file to the declarative format |
+| `host [--show --write]` | declared machine posture vs reality: audit rules, egress zones |
 | `list` | inventory: name, kind, group, presence, services |
 | `check` | config consistency, values present, `0600` perms |
 | `status [--only N]` | store vs deployed: synced / drift / not deployed |
@@ -257,11 +314,105 @@ Completes subcommands, flags, and dynamically the secret names (`--only`, `get`,
 | `render` / `verify-render` | write / check `rendered/<service>.env` |
 | `seal` / `open` | encrypted store mirror for off-machine backup |
 | `audit [--source --since --denied --ip --json]` | who reached what, when, what changed |
+| `elevation [--since --window --context --rules --json]` | who became root, when, via what, and the commands around it |
 | `leaks [--staged]` | find managed values in cleartext (tree, or the git index) |
 
 Guard your commits: `--staged` scans what's about to be committed. Install the hook
 with `cp deploy/git-hooks/pre-commit .git/hooks/ && chmod +x .git/hooks/pre-commit`,
 and a commit that embeds a managed value in cleartext is refused.
+
+## The declaration file
+
+Declarative, in the shape a Compose file taught you to read: reusable `x-`
+templates, `<<:` to pull one in, `include:` to split by domain.
+
+```yaml
+x-password: &password { kind: password, group: auto, length: 20 }
+x-appkey:   &appkey   { kind: apikey,   group: manual }
+
+include:
+  - secrets.media.yaml          # only on the box that runs the media stack
+
+secrets:
+  PIHOLE_ADMIN_PASSWORD:
+    <<: *password
+    length: 14
+    sinks:
+      - env:pihole#FTLCONF_webserver_api_password
+      - env:homepage#HOMEPAGE_VAR_PIHOLE_KEY
+
+  JELLYFIN_API_KEY:
+    <<: *appkey
+    sinks: [ env:homepage#HOMEPAGE_VAR_JELLYFIN_KEY ]
+```
+
+Keys written in a secret beat the template, exactly as YAML says. Adopted files
+are unchanged: a sink still names a place inside a file you already had.
+
+The parser is a restricted subset, no dependency: block mappings, `-` lists,
+one-line flow mappings, anchors, aliases, `<<`, comments. Anything else raises an
+error naming the line instead of guessing. Its output is checked against PyYAML.
+
+### Migrating from the old INI
+
+```
+bv-secrets migrate-conf              # shows the result, writes nothing
+bv-secrets migrate-conf --in-place --yes
+```
+
+Nothing is written unless re-reading the result gives back the same config, field
+by field. `--in-place` keeps the filename and the inode, so the dashboard's
+single-file bind mount and its baked `BV_SECRETS_CONF` keep working; the format is
+recognised by content, not by extension. The original is kept as
+`<name>.ini.bak`. Both readers stay available, so an untouched install keeps
+working.
+
+### Extending the format? Rebuild the dashboard first
+
+The dashboard image bakes `bvsecrets/`. A declaration file using a key its baked
+copy does not know is a config it cannot parse, and it dies on the next request.
+Rebuild and recreate it *before* writing the new key:
+
+```
+docker compose build bv-secrets-web && docker compose up -d bv-secrets-web
+```
+
+## The machine's posture
+
+Two more top-level keys describe the host rather than a secret. bv-secrets does
+not apply them: it renders them, and mechanisms your distribution already ships
+and maintains do the enforcing.
+
+```yaml
+egress:
+  osint:                                    # a container that may reach the
+    subnet: 172.31.9.0/24                   # internet but not the LAN or tunnel
+    block: [192.168.0.0/16, 10.0.0.0/8, 169.254.0.0/16]
+
+audit:
+  elevation:
+    trace: [sudo, doas, su, execve-setuid]  # what `elevation` will have to read
+    window: 4
+```
+
+```
+bv-secrets host            # what is declared vs what the machine actually has
+bv-secrets host --show     # print the rendered audit rules
+```
+
+Binaries are resolved on *this* machine: `su` is `bbsuid` on Alpine, `doas` does
+not exist on Ubuntu. A rule pointing at an absent path is accepted by auditd and
+never fires, so a name that resolves nowhere is reported instead of written.
+
+Exit code is `0` conforming, `1` drifted, `2` could not be verified — because
+"I cannot read the file" is not "everything is fine". No dormant privilege: rules
+are rendered into the store the account already owns, and the one command that
+needs root is printed, never run for you.
+
+This is deliberately not a daemon. A single process able to rewrite your firewall
+*and* your secrets *and* your adopted config files is one compromise away from
+total, which is the opposite of the privilege asymmetry the rest of the tool is
+built on. One declaration, several enforcers.
 
 ## Two axes, don't mix them
 

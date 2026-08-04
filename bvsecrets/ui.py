@@ -68,6 +68,38 @@ def table(rows, headers=None, gap: int = 2) -> str:
     return "\n".join(lines)
 
 
+# Classes of secret, coloured so the two families never have to be told apart by
+# reading: API/token in yellow, auto-rotated passwords in red.
+# Deux tables, parce qu'il y a deux questions. L'objet dit A QUI appartient la
+# valeur -- c'est ce qui decide si tu peux la regenerer. La rotation dit QUAND.
+OBJECT_STYLE = {
+    "password": (RED, "MOTS DE PASSE", "les tiens : generables et rotables ici"),
+    "token":    (YELLOW, "TOKENS / CLES API", "emis par l'app tierce : regenerer dedans, puis `set`"),
+    "computed": (CYAN, "CALCULES", "derives d'autres secrets, jamais stockes"),
+}
+
+ROTATION_STYLE = {
+    "auto":     (GREEN, "auto"),
+    "ondemand": (MAGENTA, "sur demande"),
+    "never":    (DIM, "jamais"),
+}
+
+
+def object_style(name: str):
+    return OBJECT_STYLE.get(name, (DIM, name, ""))
+
+
+def rotation_tag(name: str, width: int = 0):
+    style, label = ROTATION_STYLE.get(name, (DIM, name))
+    return (label.ljust(width) if width else label), style
+
+
+def section(name: str) -> str:
+    """Titre d'un bloc objet : le libelle colore, puis ce qu'il veut dire."""
+    style, label, help_text = object_style(name)
+    return paint(f"-- {label} ", style, BOLD) + paint(f"({help_text})", DIM)
+
+
 _OUTCOME = {
     "allow": ("ok", GREEN),
     "deny": ("DENY", RED),

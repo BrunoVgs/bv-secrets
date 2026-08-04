@@ -71,10 +71,14 @@ def run_secret_action(job, action, emit):
 def process(job_path: Path):
     log = []
     jid, status, data = job_path.stem, "error", None
+    # Fail-safe: assume the job holds a value until parsing proves otherwise, so an
+    # unreadable file is never archived on the off chance it carries a secret.
+    carries_value = True
     emit = _make_logger(jid, log)
     try:
         job = json.loads(job_path.read_text())
         jid = job.get("id", jid)
+        carries_value = bool(job.get("value"))
         emit = _make_logger(jid, log)
         action = job.get("action")
         handler = HANDLERS.get(action)
@@ -91,6 +95,11 @@ def process(job_path: Path):
     except Exception as e:
         emit(f"EXC: {e}")
     write_result(jid, status, log, data)
+    if carries_value:
+        # `done/` is an archive, and this job holds a plaintext secret: dropping it
+        # is the point. The result written above is value-free.
+        job_path.unlink(missing_ok=True)
+        return
     DONE.mkdir(parents=True, exist_ok=True)
     try:
         job_path.rename(DONE / job_path.name)

@@ -3,6 +3,10 @@
 The dashboard only writes a job descriptor; the privileged worker runs it and
 writes back a value-free result. Writes go through a renamed temp file so the
 worker never reads a partial job.
+
+A job MAY carry a secret value (adding a password or an API key from the UI): the
+file is created 0600 before anything is written to it, and the worker deletes such
+a job instead of archiving it (see worker/loop.py).
 """
 import json
 import os
@@ -21,7 +25,12 @@ def queue(**fields):
     REQ.mkdir(parents=True, exist_ok=True)
     job = {"id": jid, "ts": time.time(), "src": "web", **fields}
     tmp = REQ / f".{jid}.tmp"
-    tmp.write_text(json.dumps(job))
+    # O_CREAT|O_EXCL with an explicit 0600: the mode is set at creation, so the
+    # payload is never briefly world-readable the way write_text() + chmod would
+    # leave it (the container umask is not ours to assume).
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w") as fh:
+        fh.write(json.dumps(job))
     tmp.replace(REQ / f"{jid}.json")
     return jid
 

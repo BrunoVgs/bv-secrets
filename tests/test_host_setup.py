@@ -74,7 +74,7 @@ class TestInitIsTheWholeInstall(unittest.TestCase):
             self.assertEqual(r.returncode, 0, r.stderr)
             self.assertTrue((store / "spool").is_dir())
             self.assertTrue(conf.exists())
-            self.assertIn("[APP_ADMIN_PASSWORD]", conf.read_text())   # bien le modele
+            self.assertIn("APP_ADMIN_PASSWORD:", conf.read_text())    # bien le modele
             # secrets_dir epingle : la commande suivante retrouve le store seule
             self.assertIn(str(store), (Path(d) / "bv.ini").read_text())
 

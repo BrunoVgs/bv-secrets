@@ -1,7 +1,7 @@
 """Read-only inventory view for the UI. The dashboard has no write privilege: this
 reads the read-only store and never returns a value, only presence and length."""
 from bvsecrets import Engine, looks_like_apikey
-from bvsecrets.config import GEN_KINDS, ROTATE_GROUPS
+from bvsecrets.config import GEN_KINDS, ROTATE_GROUPS, secret_object, secret_rotation
 
 
 def rotatable(cfg, name):
@@ -27,6 +27,10 @@ def _row(engine, name, meta):
         "last_set": meta.get(name, ""),
         "computed": c["kind"] == "computed",
         "apikey": c["kind"] == "apikey" or looks_like_apikey(name),
+        # Family shown in the UI. Computed in the core so the dashboard and the CLI
+        # cannot end up classifying the same secret differently.
+        "obj": secret_object(c["kind"], name),
+        "rot": secret_rotation(c["kind"], c["group"], name),
     }
 
 

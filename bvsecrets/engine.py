@@ -15,19 +15,30 @@ import subprocess
 from pathlib import Path
 
 from . import locations, validate
-from .config import (ALL_KINDS, COMPOSE_DIR, CONF, DEFAULT_LEN, GEN_KINDS, KEYFILE,
-                     LOCAL, MASTER, META, MIRROR, REF, RENDER_DIR)
+from .config import (ALL_KINDS, COMPOSE_DIR, CONF, ConfigError, DEFAULT_LEN, GEN_KINDS,
+                     KEYFILE, LOCAL, MASTER, META, MIRROR, REF, RENDER_DIR, is_yaml)
+from . import conf_yaml
 from .envfile import parse_env, write_env
-
-
-class ConfigError(RuntimeError):
-    """Missing or inconsistent config; raised to the caller instead of sys.exit so
-    the worker can turn it into a job result."""
 
 
 class RotateAborted(RuntimeError):
     """A sink failed; already-applied sinks were rolled back and the store is
     untouched."""
+
+
+def sink_service(sink: str):
+    """-> the compose service this sink obliges us to recreate, or None.
+
+    `env:<svc>#VAR` writes rendered/<svc>.env, which a container only re-reads at
+    creation. `sqlite:<db>@<ctr>#...` writes into a database the service has
+    already loaded in memory: without a recreate it keeps serving the old value,
+    which is the exact silent breakage the connector exists to prevent."""
+    target = sink.partition("#")[0]
+    if sink.startswith("env:"):
+        return target[len("env:"):]
+    if sink.startswith("sqlite:") and "@" in target:
+        return target.rpartition("@")[2]
+    return None
 
 
 class Engine:
@@ -38,6 +49,15 @@ class Engine:
     # ---- config + values ----
     @staticmethod
     def _load_conf() -> dict:
+        if not CONF.exists():
+            raise ConfigError(
+                f"config introuvable: {CONF}\n"
+                f"La créer depuis le modèle : bv-secrets init")
+        if is_yaml():
+            cfg = conf_yaml.load()
+            for name, c in cfg.items():
+                Engine._reject_linux_sink(name, c["sinks"])
+            return cfg
         cp = configparser.ConfigParser(interpolation=None)
         cp.optionxform = str
         if not CONF.exists():
@@ -48,13 +68,7 @@ class Engine:
         out = {}
         for name in cp.sections():
             s = cp[name]
-            for sink in s.get("sinks", "").splitlines():
-                if sink.strip().startswith("linux:"):
-                    user = sink.strip()[6:].partition("@")[0]
-                    raise ConfigError(
-                        f"{name}: le sink `linux:` a été supprimé (il imposait doas à "
-                        f"l'hôte).\nLe remplacer par la commande de ton choix :\n"
-                        f"    sinks = cmd:sudo chpasswd <<< '{user}:{{value}}'")
+            Engine._reject_linux_sink(name, s.get("sinks", "").splitlines())
             out[name] = {
                 "kind": s.get("kind", "manual").strip(),
                 "length": int((s.get("length", "") or "0").strip() or 0),
@@ -67,6 +81,19 @@ class Engine:
                 "note": s.get("note", "").strip(),
             }
         return out
+
+    @staticmethod
+    def _reject_linux_sink(name, sinks):
+        """Le sink `linux:` imposait un doas cote hote ; il n'existe plus. Le dire
+        explicitement vaut mieux que de l'ignorer et de laisser croire que la
+        propagation a lieu."""
+        for sink in sinks:
+            if sink.strip().startswith("linux:"):
+                user = sink.strip()[6:].partition("@")[0]
+                raise ConfigError(
+                    f"{name}: le sink `linux:` a été supprimé (il imposait doas à "
+                    f"l'hôte).\nLe remplacer par la commande de ton choix :\n"
+                    f"    cmd:sudo chpasswd <<< '{user}:{{value}}'")
 
     @staticmethod
     def _combined() -> dict:
@@ -205,20 +232,19 @@ class Engine:
     def services_to_recreate(self, names) -> list:
         """Services whose container must be recreated after apply.
 
-        DERIVED from sinks, never declared by hand: an `env:<svc>#VAR` sink writes
-        rendered/<svc>.env, which a container only re-reads at creation. `computed`
-        secrets referencing a rotated one count too. `norestart` excludes services
-        that read the var only at init (mariadb: the real password is set by mysql:).
+        DERIVED from sinks, never declared by hand: see `sink_service` for which
+        sinks oblige a recreate and why. `computed` secrets referencing a rotated
+        one count too. `norestart` excludes services that read the var only at
+        init (mariadb: the real password is set by mysql:).
         """
         svcs, skip = [], set()
         for n in list(names) + self.affected_computed(names):
             c = self.cfg.get(n, {})
             skip |= set(c.get("norestart", []))
             for sink in c.get("sinks", []):
-                if sink.startswith("env:"):
-                    svc = sink[4:].partition("#")[0]
-                    if svc not in svcs:
-                        svcs.append(svc)
+                svc = sink_service(sink)
+                if svc and svc not in svcs:
+                    svcs.append(svc)
         return [s for s in svcs if s not in skip]
 
     def recreate(self, names, dry: bool, log):
@@ -515,10 +541,15 @@ class Engine:
                 problems.append(f"BAD kind on {n}: {c['kind']}")
             if c["group"] not in GROUPS:
                 problems.append(f"BAD group on {n}: {c['group']}")
+            # L'implication ne vaut que dans un sens. Un nom en API/TOKEN designe
+            # forcement une cle emise par une app tierce, et la generer casserait
+            # l'app -- ca, on le refuse. L'inverse est faux : PORTAINER_KEY,
+            # SONARR_KEY, un webhook signe... sont des cles tierces que l'heuristique
+            # de nommage ne peut pas voir. Declarer kind=apikey, c'est justement
+            # apporter l'information qui manque ; le refuser rendrait le champ
+            # inutilisable partout ou la convention de nommage differe.
             if looks_like_apikey(n) and c["kind"] != "apikey":
                 problems.append(f"NAME/KIND {n}: nom de clé d'app tierce mais kind={c['kind']}")
-            if c["kind"] == "apikey" and not looks_like_apikey(n):
-                problems.append(f"NAME/KIND {n}: kind=apikey mais le nom ne contient ni API ni TOKEN")
             if c["kind"] != "computed" and not self.data.get(n):
                 problems.append(f"MISSING value: {n}")
             if c["validate"] and self.data.get(n):

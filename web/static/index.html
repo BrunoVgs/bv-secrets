@@ -56,11 +56,12 @@
       <input class="search" id="search" placeholder="Rechercher…">
       <span id="kindFilters" class="bar"></span>
       <span class="cli" id="coffreCount"></span>
+      <button class="btn solid" id="addOpen" style="margin-left:auto">+ Ajouter</button>
     </div>
     <div class="panel">
       <div class="row g-coffre head" id="coffreHead"><div></div>
         <div><span class="srt" data-sort="name">SECRET<span class="ar"></span></span></div>
-        <div><span class="srt" data-sort="kind">FORMAT<span class="ar"></span></span></div>
+        <div><span class="srt" data-sort="kind">OBJET<span class="ar"></span></span></div>
         <div><span class="srt" data-sort="group">ROTATION<span class="ar"></span></span></div>
         <div><span class="srt" data-sort="value">VALEUR<span class="ar"></span></span></div>
         <div><span class="srt" data-sort="last">DERNIER SET<span class="ar"></span></span></div>
@@ -71,15 +72,23 @@
 
     <details class="leg" id="leg"><summary>Légende
       <span class="hint">— colonnes et pastilles</span></summary><div class="legbody">
+      <div class="legcol"><h4>OBJET — à qui la valeur appartient</h4>
+        <div><b style="color:#d63a42">mot de passe</b><i>le tien : générable et rotable ici</i></div>
+        <div><b style="color:#d9a13b">clé API / token</b><i>émise par l'app tierce : la régénérer dedans, puis « set »</i></div>
+        <div><b style="color:#8fbaff">calculé</b><i>dérivé d'autres secrets, jamais stocké</i></div>
+      </div>
+      <div class="legcol"><h4>ROTATION — quand elle est regénérée</h4>
+        <div><b style="color:#3fbf5f">auto</b><i>rotée par « Roter le groupe auto »</i></div>
+        <div><b style="color:#c86fd0">sur demande</b><i>rotée seulement si explicitement ciblée</i></div>
+        <div><b style="color:#8b8b8b">jamais</b><i>jamais rotée d'ici</i></div>
+      </div>
       <div class="legcol"><h4>FORMAT</h4>
-        <div><b style="color:#8fbaff">clé API</b><i>émise par une app tierce, jamais générée ici</i></div>
         <div><b>password</b><i>mot de passe aléatoire</i></div>
         <div><b>hex</b><i>hexadécimal aléatoire</i></div>
         <div><b>b64</b><i>base64 aléatoire</i></div>
         <div><b>passphrase</b><i>longue suite alphanumérique</i></div>
         <div><b>userpass</b><i>paire user:motdepasse</i></div>
         <div><b>opaque</b><i>posée à la main, jamais générée</i></div>
-        <div><b>computed</b><i>dérivée d'autres secrets, jamais stockée</i></div>
       </div>
       <div class="legcol"><h4>ROTATION</h4>
         <div><b>auto</b><i>rotée par « Roter le groupe auto »</i></div>
@@ -121,7 +130,8 @@
   <section class="view hidden" data-view="comptes">
     <div class="panel">
       <div class="ph"><span class="sq"></span><span class="t">COMPTES DU PORTAIL</span>
-        <button class="btn" id="usersReload" data-busy>rafraîchir</button></div>
+        <button class="btn" id="usersReload" data-busy>rafraîchir</button>
+        <button class="btn solid" id="userAdd" data-busy>+ Nouveau compte</button></div>
       <div class="row g-user head"><div>COMPTE</div><div>RÔLE</div><div>CRÉÉ</div>
         <div style="text-align:right"></div></div>
       <div id="userRows"></div>
@@ -144,6 +154,39 @@
       <button class="btn big solid" id="accessSave" data-busy>💾 Appliquer</button>
       <span class="cli" id="accessStatus"></span>
     </div>
+  </section>
+
+  <!-- FILES -->
+  <section class="view hidden" data-view="fichiers">
+    <div class="panel">
+      <div class="ph"><span class="sq"></span><span class="t">ADOPTER UN FICHIER</span>
+        <span class="note" id="adoptRoots"></span></div>
+      <div class="pb" style="display:flex;flex-direction:column;gap:10px">
+        <div class="bar">
+          <input class="search" id="adoptPath" style="flex:1"
+            placeholder="/chemin/absolu/vers/.env">
+          <input class="search" id="adoptPrefix" style="flex:0 0 160px"
+            placeholder="préfixe (option)">
+          <button class="btn solid" id="adoptScan" data-busy>Analyser</button>
+        </div>
+        <div class="cli">Lecture seule : les clés détectées sont proposées, rien n'est
+          déclaré tant que l'adoption n'est pas confirmée.</div>
+        <div id="adoptResult"></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="ph"><span class="sq amber"></span><span class="t">FICHIERS ADOPTÉS</span>
+        <span class="cli" id="filesCount"></span></div>
+      <div class="row g-files head"><div>FICHIER</div><div>TYPE</div>
+        <div>SECRETS</div><div style="text-align:right">EMPLACEMENTS</div></div>
+      <div id="filesRows"></div>
+    </div>
+    <div class="cli">Déduit des sinks déclarés dans <b>secrets.conf</b> — pas de second
+      registre à tenir. Un secret apparaît ici dès qu'un de ses sinks désigne un endroit
+      précis d'un fichier (<b>envfile:</b> <b>json:</b> <b>yaml:</b> <b>ini:</b>
+      <b>toml:</b> <b>regex:</b> <b>file:</b>). Les sinks <b>env:</b> visent un service,
+      pas un fichier adopté. Cliquer un emplacement ouvre le secret correspondant.</div>
   </section>
 
   <!-- AUDIT -->
@@ -188,7 +231,8 @@
 <dl>
 <dt>list</dt><dd>Inventaire : nom, type, groupe, présence, services. Aucune valeur.</dd>
 <dt>render</dt><dd>Réécrit les <span class=k>rendered/&lt;svc&gt;.env</span> consommés par docker-compose.</dd>
-<dt>add NAME --sink …</dt><dd>Enregistre un nouveau secret + ses cibles en une ligne.</dd>
+<dt>add NAME --sink …</dt><dd>Enregistre un nouveau secret + ses cibles en une ligne (ici : bouton <b>+ Ajouter</b> dans le Coffre).</dd>
+<dt>adopt FICHIER [--prefix]</dt><dd>Détecte les secrets d'un fichier, les déclare et importe leurs valeurs en place (ici : onglet <b>Fichiers</b>).</dd>
 <dt>check · verify-render</dt><dd>Cohérence config + perms 0600 ; parité des rendus.</dd>
 <dt>seal · open</dt><dd>Miroir chiffré du store (backup hors-machine).</dd>
 <dt>audit [--source --since --denied]</dt><dd>Timeline unifiée : qui a atteint quoi, quand, d'où, et ce qui a changé (onglet <b>Audit</b>). Agrège des logs existants, aucune valeur.</dd>
@@ -201,7 +245,8 @@
 <dt>computed</dt><dd>Secret dérivé d'autres (ex. <span class=k>AUTHSF_DATABASE_URL</span>, qui contient <span class=k>MARIADB_APP_PASSWORD</span>) — se recalcule tout seul.</dd>
 <dt>recréation</dt><dd>Un conteneur ne relit son <span class=k>env_file</span> qu'à la création : tout service ciblé par un sink <span class=k>env:</span> est donc <b>recréé</b> après application. Déduit des sinks, jamais déclaré à la main.</dd>
 <dt>probe</dt><dd>Commande de vérification déclarée par secret (<span class=k>doctor</span>) : teste la valeur contre la vraie app, exit 0 = ✓. Jamais destructif, n'affiche aucune valeur.</dd>
-<dt>worker</dt><dd>Le <b>seul</b> composant privilégié (docker + store rw). Le dashboard n'a aucun privilège : il dépose un job dans le spool, le worker l'exécute et renvoie un log <b>sans valeur</b>.</dd>
+<dt>worker</dt><dd>Le <b>seul</b> composant privilégié (docker + store rw). Le dashboard n'a aucun privilège : il dépose un job dans le spool, le worker l'exécute et renvoie un log <b>sans valeur</b>. Seuls les jobs qui portent une valeur en clair (ajout d'un secret, création d'un compte) font exception : leur fichier est créé en 0600 et <b>supprimé</b> au lieu d'être archivé.</dd>
+<dt>racines adoptables</dt><dd>L'adoption depuis le web est bornée à <span class=k>BV_ADOPT_ROOTS</span> (défaut : le dossier du compose). Sans cette borne, le worker — qui tourne sous le compte propriétaire de la stack — pourrait être pointé sur n'importe quel fichier lisible, <span class=k>~/.ssh</span> compris. La CLI n'est pas concernée : elle tourne déjà sous ce compte.</dd>
 <dt>accès</dt><dd>La carte <b>Accès</b> édite <span class=k>access/access.conf</span> (source unique « qui voit quoi ») ; le worker relance le rendu, recrée le reverse-proxy puis redémarre les services concernés.</dd>
 <dt>audit</dt><dd>Lentille en <b>lecture seule</b> sur des logs qui existent déjà : accès Caddy (IP, service, autorisé/refusé), trail des jobs du worker, connexions ssh et élévations (sudo/doas), dates de rotation. Pas de collecte ni de rétention. Les sources root (Caddy, log hôte) restent lues par le worker avec les droits qu'il a déjà ; le dashboard en affiche le dernier instantané daté.</dd>
 </dl>
@@ -210,6 +255,8 @@
 </main>
 
 <div id="drawerHost"></div>
+<div id="addHost"></div>
+<div id="userHost"></div>
 
 <div id="jobpanel"><div class="jh"><span class="t">CONSOLE WORKER</span>
   <button class="btn" id="jobclose">✕</button></div><div id="joblog"></div></div>

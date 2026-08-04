@@ -5,6 +5,8 @@ export const CSRF = BOOT.csrf;
 export const KINDS = BOOT.kinds;
 export const GROUPS = BOOT.groups;
 export const ROLES = BOOT.roles;
+export const SINK_TYPES = BOOT.sinkTypes;
+export const ADOPT_ROOTS = BOOT.adoptRoots;
 
 export const S = {
   secrets: BOOT.secrets,
@@ -14,6 +16,10 @@ export const S = {
   revealed: {},      // nom -> valeur révélée, mémoire de l'onglet uniquement
   users: null,       // null tant que la vue Comptes n'a pas chargé
   audit: null,       // null tant que la vue Audit n'a pas chargé
+  files: BOOT.files, // fichiers adoptés, déduits des sinks de secrets.conf
+  adoptPlan: null,   // aperçu d'adoption en cours : {file, proposals, ignored, conflicts}
+  adding: null,      // formulaire d'ajout ouvert : brouillon du secret à créer
+  addingUser: null,  // formulaire ouvert : brouillon du compte de portail à créer
   view: "overview",
   busy: false,
   search: "",

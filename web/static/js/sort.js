@@ -6,6 +6,7 @@
    Le critère primaire doit primer : `name` étant unique par secret, le laisser en
    tête rendait tout critère ajouté après lui sans effet visible. */
 import { $, $$ } from "./dom.js";
+import { OBJ_ORDER } from "./labels.js";
 
 const GRP_RANK = { auto: 0, app: 1, careful: 2, manual: 3 };
 
@@ -17,7 +18,7 @@ export const SORT = {
 function sortValue(secret, key) {
   switch (key) {
     case "name": return secret.name.toLowerCase();
-    case "kind": return secret.apikey ? "0 clé API" : `1 ${secret.kind}`;  // clés API en tête
+    case "kind": return `${OBJ_ORDER.indexOf(secret.obj)} ${secret.kind}`;  // par objet
     case "group": return GRP_RANK[secret.group] ?? 9;
     case "value": return (secret.present ? 1 : 0) * 100000 + (secret.len || 0);
     case "last": return secret.last_set || "";        // "AAAA-MM-JJ hh:mm" -> ordre chrono

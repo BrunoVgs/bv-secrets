@@ -56,10 +56,15 @@ class TestProjectFileResolution(unittest.TestCase):
     chaque cas passe par un sous-processus."""
 
     def resolve(self, cwd, **env):
+        # BV_CONFIG points at nothing on purpose: what is under test is the search
+        # order, and a bv-secrets.ini on the machine running the suite declares
+        # secrets_conf, which legitimately outranks that search. Without this the
+        # result depends on whether the box happens to be configured.
         r = subprocess.run(
             [sys.executable, "-c", "from bvsecrets.config import CONF; print(CONF)"],
             cwd=cwd, capture_output=True, text=True,
-            env={**os.environ, "PYTHONPATH": str(ROOT), **env})
+            env={**os.environ, "PYTHONPATH": str(ROOT),
+                 "BV_CONFIG": str(Path(cwd) / "aucun-ini-ici.ini"), **env})
         self.assertEqual(r.returncode, 0, r.stderr)
         return r.stdout.strip()
 

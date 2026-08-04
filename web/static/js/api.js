@@ -1,5 +1,5 @@
 /* HTTP access. Every mutation goes through a job: the dashboard writes nothing. */
-import { CSRF, setSecrets } from "./state.js";
+import { CSRF, S, setSecrets } from "./state.js";
 
 async function json(url, options) {
   const response = await fetch(url, options);
@@ -36,6 +36,30 @@ export async function postJob(url, payload) {
 export function fetchJob(id) {
   return fetch(`api/jobs/${id}`).then((r) => r.json());
 }
+
+/* Resync the adopted-file inventory. Same contract as refreshList: on failure the
+   current state is kept rather than blanked. */
+export async function refreshFiles() {
+  try {
+    const { body } = await json("api/files");
+    if (body && body.files) S.files = body.files;
+  } catch { /* état courant conservé */ }
+}
+
+/* Jobs carrying a value re-authenticate like reveal does. The dashboard password
+   is not stored: it travels with this one request. */
+async function postAuthed(url, payload) {
+  const { response, body } = await json(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-CSRF": CSRF },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
+  return body;
+}
+
+export const addSecret = (payload) => postAuthed("api/secret/add", payload);
+export const createUser = (payload) => postAuthed("api/user/create", payload);
 
 export async function reveal(name, password) {
   const { response, body } = await json("api/reveal", {

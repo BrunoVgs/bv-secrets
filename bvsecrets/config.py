@@ -12,6 +12,14 @@ import shutil
 from pathlib import Path
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
+
+
+class ConfigError(RuntimeError):
+    """Config absente ou incoherente ; remontee a l'appelant plutot qu'un
+    sys.exit, pour que le worker puisse en faire un resultat de job.
+
+    Definie ici et pas dans engine.py : les lecteurs de format (conf_yaml) en ont
+    besoin et sont importes PAR engine, donc l'y laisser fermait un cycle."""
 XDG_DIR = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "bv-secrets"
 # Starter config written by `init`. Ships inside the package, so an install with
 # no checkout has something to start from.
@@ -87,7 +95,55 @@ SPOOL = SECRETS_DIR / "spool"
 AUDIT_DIR = SECRETS_DIR / "audit"
 WORKER_DIGEST = AUDIT_DIR / "digest.json"
 
-CONF = _path("BV_SECRETS_CONF", _project_file("BV_SECRETS_CONF", "secrets.conf"))
+def _find_conf() -> Path:
+    """Le format declaratif d'abord, l'INI ensuite. Les deux lecteurs coexistent
+    le temps que les installations existantes migrent ; `bv-secrets migrate-conf`
+    fait la bascule, et un secrets.yaml present gagne toujours."""
+    forced = os.environ.get("BV_SECRETS_CONF") or _FILE.get("secrets_conf")
+    if forced:
+        return Path(forced)
+    for filename in ("secrets.yaml", "secrets.yml", "secrets.conf"):
+        for candidate in (Path.cwd() / filename, XDG_DIR / filename, PROJECT_DIR / filename):
+            if candidate.exists():
+                return candidate
+    checkout = (PROJECT_DIR / "pyproject.toml").exists()
+    return (PROJECT_DIR if checkout else XDG_DIR) / "secrets.conf"
+
+
+CONF = _find_conf()
+
+
+def is_yaml(path=None) -> bool:
+    """Le format, decide par le contenu, pas par le nom.
+
+    Trois endroits hors du depot figent le nom `secrets.conf` : le bind mount du
+    dashboard, `BV_SECRETS_CONF` dans son image, et le modele d'init. Trancher
+    sur l'extension aurait impose de les changer tous les trois en meme temps,
+    et un oubli se serait vu en production, pas ici. Renifler le contenu rend la
+    migration sur place possible : meme nom, meme inode, aucun montage touche."""
+    path = Path(path or CONF)
+    if str(path).endswith((".yaml", ".yml")):
+        return True
+    try:
+        head = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    for line in head.splitlines():
+        s = line.strip()
+        if not s or s.startswith("#"):
+            continue
+        # `[NOM]` ouvre une section INI ; `secrets:` ou `x-...:` ouvrent le YAML.
+        if s.startswith("[") and s.endswith("]"):
+            return False
+        if s == "secrets:" or (s.startswith("x-") and ":" in s) or s.startswith("include:"):
+            return True
+    return False
+# The INI ships `secrets_conf = secrets.conf`, so a copied template yields a bare
+# filename. Left relative it would resolve against the caller's cwd -- a `list`
+# from elsewhere would silently read nothing, and an `adopt` would drop a second
+# secrets.conf wherever the shell happened to be. Anchor it to the project.
+if not CONF.is_absolute():
+    CONF = (PROJECT_DIR / CONF).resolve()
 # The declaration file sits under the compose root by default, so `recreate` and
 # `leaks` target the right place with no config.
 COMPOSE_DIR = _path("BV_COMPOSE_DIR", CONF.parent.parent)
@@ -123,6 +179,23 @@ def host_log_source():
             return "file", Path(cand)
     return ("journal", None) if shutil.which("journalctl") else (None, None)
 
+# Elevation lens. auditd is the authority: it records elevation from cron, scripts
+# and containers, which no shell history sees. audit.log is group-readable (adm on
+# Debian, wheel on Alpine), so the lens needs no privilege of its own.
+AUDIT_LOG = _path("BV_AUDIT_LOG", "/var/log/audit/audit.log")
+AUDIT_RULES_FILE = _path("BV_AUDIT_RULES_FILE", "/etc/audit/rules.d/50-bv-elevation.rules")
+ELEVATION_KEY = _setting("BV_ELEVATION_KEY", "bv_elevation")
+# Context provider: zsh-history works with no extra dependency, atuin adds cwd and
+# exit code but has to be installed and hooked into the shell first.
+ELEVATION_CONTEXT = _setting("BV_ELEVATION_CONTEXT", "zsh-history")
+ELEVATION_WINDOW = int(_setting("BV_ELEVATION_WINDOW", "4"))
+# Ecart maximal entre une elevation et une commande presentee comme son contexte.
+# Sans borne, une elevation lancee par cron se voit entourer des dernieres
+# commandes interactives, vieilles de plusieurs heures : le rapport suggere une
+# proximite qui n'existe pas, et c'est precisement ce qu'il est cense etablir.
+ELEVATION_MAX_GAP = int(_setting("BV_ELEVATION_MAX_GAP", "900"))
+ZSH_HISTORY = _path("BV_ZSH_HISTORY", Path.home() / ".zsh_history")
+
 # LOCAL-ONLY: no outbound SSH. Remote sinks are rejected (see Engine._apply_sink).
 
 # Two orthogonal axes: kind = value FORMAT, group = rotation POLICY.
@@ -156,9 +229,27 @@ AUTH_CONSOLE = _setting("BV_AUTH_CONSOLE", "php bin/console")
 AUTH_CMD_LIST = _setting("BV_AUTH_CMD_LIST", "app:users")
 AUTH_CMD_SETROLE = _setting("BV_AUTH_CMD_SETROLE", "app:set-role")
 AUTH_CMD_DELETE = _setting("BV_AUTH_CMD_DELETE", "app:delete-user")
+# Creation takes the password on STDIN: it must never appear in argv (ps, logs).
+AUTH_CMD_CREATE = _setting("BV_AUTH_CMD_CREATE", "app:create-user --stdin")
+MIN_ACCOUNT_PASSWORD = 8
 
 # Access-log path prefixes to drop from the audit (internal polling, health checks).
 AUDIT_IGNORE_PREFIXES = tuple(_csv("BV_AUDIT_IGNORE_PATHS"))
+
+# Directories the web UI is allowed to adopt a file from. The worker runs as the
+# account that owns the stack, so without this it could be pointed at ~/.ssh or any
+# other file that account can read. The CLI is unaffected: it already runs as that
+# account, and restricting it would buy nothing.
+ADOPT_ROOTS = [Path(p).resolve() for p in _csv("BV_ADOPT_ROOTS", str(COMPOSE_DIR))]
+
+
+def adopt_root_error(path: Path):
+    """-> refusal message, or None if `path` sits under an allowed root."""
+    allowed = [r for r in ADOPT_ROOTS if path == r or path.is_relative_to(r)]
+    if allowed:
+        return None
+    roots = ", ".join(str(r) for r in ADOPT_ROOTS) or "(aucune)"
+    return f"chemin hors des racines autorisées ({roots})"
 
 REF = re.compile(r"\{([A-Za-z0-9_]+)\}")
 # A name containing API or TOKEN marks a third-party key -> kind=apikey enforced.
@@ -167,3 +258,47 @@ _API_RE = re.compile(r"(?:^|_)(?:API|TOKEN)(?:_|$)")
 
 def looks_like_apikey(name: str) -> bool:
     return bool(_API_RE.search(name.upper()))
+
+
+# Visual classification. `kind` and `group` are the right model but they are two
+# axes, and reading a list means combining them in your head every line. The class
+# collapses them into the one question actually being asked at a glance: is this
+# mine to set or the app's, and does `rotate` touch it. Shared here rather than in
+# each front end, so the CLI and the dashboard can never disagree.
+# Deux axes independants, et surtout SEPARES a l'affichage. Les melanger en une
+# seule famille faisait dire deux fois la meme chose ("MDP auto" en titre, "auto"
+# dans la colonne groupe) tout en cachant la question qui compte : est-ce MON mot
+# de passe, ou une cle emise par une app tierce ?
+#
+#   objet    ce que la valeur EST      -> mot de passe | token/API | calcule
+#   rotation QUAND elle est regeneree  -> auto | sur demande | jamais
+
+OBJ_PASSWORD = "password"      # une valeur que je pose ou que je genere
+OBJ_TOKEN = "token"            # emise par une app tierce, jamais generable
+OBJ_COMPUTED = "computed"      # derivee d'autres secrets, jamais stockee
+OBJ_ORDER = (OBJ_PASSWORD, OBJ_TOKEN, OBJ_COMPUTED)
+
+ROT_AUTO = "auto"              # `rotate` nu la regenere
+ROT_ONDEMAND = "ondemand"      # regeneree seulement si explicitement ciblee
+ROT_NEVER = "never"            # jamais regeneree
+ROT_ORDER = (ROT_AUTO, ROT_ONDEMAND, ROT_NEVER)
+
+
+def secret_object(kind: str, name: str = "") -> str:
+    """-> OBJ_*. Le nom tranche : API/TOKEN dedans designe une cle tierce, meme
+    si le `kind` declare pretend le contraire -- la generer casserait l'app."""
+    if kind == "computed":
+        return OBJ_COMPUTED
+    if kind == "apikey" or looks_like_apikey(name):
+        return OBJ_TOKEN
+    return OBJ_PASSWORD
+
+
+def secret_rotation(kind: str, group: str, name: str = "") -> str:
+    """-> ROT_*. Une cle tierce et une valeur calculee ne se rotent jamais d'ici,
+    quel que soit leur groupe : l'une appartient a l'app, l'autre est derivee."""
+    if secret_object(kind, name) != OBJ_PASSWORD or kind not in GEN_KINDS:
+        return ROT_NEVER
+    if group == "auto":
+        return ROT_AUTO
+    return ROT_ONDEMAND if group in ROTATE_GROUPS else ROT_NEVER

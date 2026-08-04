@@ -7,9 +7,11 @@ import subprocess
 import sys
 from pathlib import Path
 
-from . import adopt, audit, conffile, service, ui, validate
-from .config import (CONF, COMPOSE_DIR, CONFIG_FILE, GEN_KINDS, KEYFILE, LOCAL, MASTER,
-                     MIRROR, PROJECT_DIR, RENDER_DIR, SECRETS_DIR, looks_like_apikey)
+from . import adopt, audit, conf_yaml, conffile, elevation, host, service, ui, validate
+from .config import (CONF, COMPOSE_DIR, CONFIG_FILE, GEN_KINDS, KEYFILE,
+                     LOCAL, MASTER, MIRROR, PROJECT_DIR, RENDER_DIR, SECRETS_DIR,
+                     OBJ_ORDER, is_yaml, looks_like_apikey, secret_object,
+                     secret_rotation)
 from .engine import ConfigError, Engine, RotateAborted
 from .envfile import parse_env, write_env
 
@@ -52,15 +54,35 @@ def cmd_list(a, e):
             if s.startswith("env:"):
                 svc_of.setdefault(name, []).append(s[4:].split("#", 1)[0])
     meta = e.meta()
-    rows = []
-    for n in sorted(e.cfg):
+
+    def row(n):
         c = e.cfg[n]
         value = e.value_of(n)
         present = (f"{len(value)}c", ui.GREEN) if value else ("--", ui.RED)
-        rows.append([n, (c["kind"], ui.DIM), c["group"], present,
-                     (meta.get(n, ""), ui.DIM),
-                     (", ".join(svc_of.get(n, ["(no-env)"])), ui.CYAN)])
-    print(ui.table(rows, headers=["SECRET", "KIND", "GROUP", "VAL", "LAST SET", "SERVICES"]))
+        # La rotation est un axe a part entiere : sa colonne porte sa couleur,
+        # elle n'est pas repetee dans le titre du bloc.
+        label, style = ui.rotation_tag(secret_rotation(c["kind"], c["group"], n))
+        return [n, (c["kind"], ui.DIM), (label, style), present,
+                (meta.get(n, ""), ui.DIM),
+                (", ".join(svc_of.get(n, ["(no-env)"])), ui.CYAN)]
+
+    headers = ["SECRET", "KIND", "ROTATION", "VAL", "LAST SET", "SERVICES"]
+    if a.flat:
+        print(ui.table([row(n) for n in sorted(e.cfg)], headers=headers))
+        return
+    # Un bloc par OBJET : mes mots de passe d'un cote, les cles des apps tierces
+    # de l'autre. C'est la seule question a laquelle un coup d'oeil doit repondre.
+    by_obj = {}
+    for n in sorted(e.cfg):
+        by_obj.setdefault(secret_object(e.cfg[n]["kind"], n), []).append(n)
+    first = True
+    for obj in OBJ_ORDER:
+        names = by_obj.get(obj)
+        if not names:
+            continue
+        print(("" if first else "\n") + ui.section(obj))
+        first = False
+        print(ui.table([row(n) for n in names], headers=headers))
 
 
 def cmd_check(a, e):
@@ -168,7 +190,7 @@ def cmd_adopt(a, e):
     path = Path(a.file).resolve()
     if not path.is_file():
         raise ConfigError(f"fichier introuvable: {path}")
-    proposals, ignored, conflicts = adopt.plan_envfile(path, prefix=a.prefix, known=set(e.cfg))
+    proposals, ignored, conflicts = adopt.plan_file(path, prefix=a.prefix, known=set(e.cfg))
     if a.only:
         wanted = {k.strip() for k in a.only.split(",")}
         proposals = [p for p in proposals if p.key in wanted]
@@ -250,6 +272,119 @@ def cmd_leaks(a, e):
     return _report(hits, "\nClean — aucune valeur gérée trouvée en clair.")
 
 
+HEADER_YAML = """\
+# =============================================================================
+# bv-secrets -- SOURCE DECLARATIVE (structure uniquement, AUCUNE valeur secrete).
+# Versionnable. Les valeurs vivent dans le store, jamais ici.
+#
+# Deux axes independants :
+#   kind   ce que la valeur EST      password|hex|b64|userpass|passphrase|apikey|opaque|computed
+#   group  QUAND on la regenere      auto (rotate nu) | autre (seulement si ciblee) | manual (jamais)
+#
+# Un sink dit ou pousser la valeur :  schema:cible#selecteur
+#   env:pihole#FTLCONF_...      variable du .env d'un service compose
+#   envfile:/chemin/.env#CLE    fichier adopte, ecrit en place, ligne par ligne
+#   file:/chemin                fichier dedie
+#   sqlite:/b.db@ctr#t.col?id=1 une cellule ; la condition doit viser UNE ligne
+#   cmd:...                     commande, {value} interpole
+#
+# Les gabarits `x-` se reprennent avec `<<: *nom` ; ce qui est pose en propre
+# dans un secret gagne sur le gabarit.
+# =============================================================================
+"""
+
+
+def cmd_host(a, e):
+    """La posture declaree par les cles `egress:` et `audit:` du fichier.
+
+    Rien n'est applique en douce : les regles sont rendues dans le store, que le
+    compte possede deja, et les commandes qui demandent root sont imprimees."""
+    if not is_yaml():
+        raise ConfigError(
+            "les cles `egress:` et `audit:` demandent le format declaratif.\n"
+            "    bv-secrets migrate-conf --in-place --yes")
+    doc = conf_yaml.parse(CONF.read_text(encoding="utf-8"))
+    spec = doc.get("host") or {}
+    if not spec:
+        _log("Aucune cle `egress:` ni `audit:` declaree. Exemple :\n")
+        print(host.EXAMPLE)
+        return 0
+
+    p = host.plan(spec)
+    rc = 0
+
+    if p["rules"]:
+        print(ui.paint("-- audit : trace des elevations", ui.BOLD))
+        for w in p["warnings"]:
+            _log(f"! {w}")
+        state, msg = host.diff(p)
+        _log({"ok": f"✓ {msg}", "unknown": f"? {msg}"}.get(state, f"~ {msg}"))
+        rc = {"ok": 0, "unknown": 2}.get(state, 1)
+        if a.show:
+            print(ui.paint(p["rules"], ui.DIM))
+        if a.write or state != "ok":
+            staged = host.write(p)
+            _log(f"+ rendu dans {staged}")
+            if state != "ok":
+                _log("\n  Les poser demande root une fois :")
+                priv = host.privilege_tool()
+                _log(f"    {priv} install -m 640 {staged} {p['rules_target']}")
+                _log(f"    {priv} augenrules --load")
+
+    if p["egress"]:
+        print("\n" + ui.paint("-- egress : cloisonnement des conteneurs", ui.BOLD))
+        for z in p["egress"]:
+            _log(f"• {z['zone']}: {z['subnet']} ne doit joindre "
+                 f"ni {', '.join(z['block'])}")
+            _log(f"    {z['cmd']}")
+    return rc
+
+
+cmd_host.no_engine = True
+
+
+def cmd_migrate_conf(a, e):
+    """secrets.conf (INI) -> secrets.yaml. Rien n'est remplace tant que la
+    relecture du YAML ne redonne pas exactement la config d'origine."""
+    from . import migrate
+    if is_yaml():
+        _log(f"{CONF.name} est deja au format declaratif, rien a faire.")
+        return 0
+    # Par defaut on ecrit DANS le fichier existant : le dashboard le bind-monte
+    # par son nom et son image fige BV_SECRETS_CONF, donc renommer casserait les
+    # deux. Le format se reconnait au contenu, l'extension n'a plus d'importance.
+    target = CONF if a.in_place else CONF.with_name("secrets.yaml")
+    if target != CONF and target.exists() and not a.force:
+        _log(f"{target} existe deja ; --force pour l'ecraser.")
+        return 1
+
+    text = migrate.convert(e.cfg, HEADER_YAML)       # leve si la conversion perd quoi que ce soit
+    tpl = migrate.plan_templates(e.cfg)
+    _log(f"{len(e.cfg)} secrets, {len(tpl)} gabarit(s), {len(text.splitlines())} lignes.")
+    _log(f"Relecture verifiee : identique a {CONF.name}, champ par champ.\n")
+    if not a.yes:
+        print(text if a.show else "\n".join(text.splitlines()[:24]))
+        _log(f"\n--yes pour ecrire {target} (l'INI est conserve), --show pour tout voir.")
+        return 0
+
+    if target == CONF:
+        backup = CONF.with_name(CONF.name + ".ini.bak")
+        backup.write_text(CONF.read_text(encoding="utf-8"), encoding="utf-8")
+        backup.chmod(0o600)
+        conffile.write_text(text)            # sur place, inode conserve
+        _log(f"✓ {CONF.name} est maintenant declaratif (inode conserve, "
+             f"montages intacts).\n  L'INI d'origine est dans {backup.name}.")
+    else:
+        target.write_text(text, encoding="utf-8")
+        target.chmod(0o600)
+        _log(f"✓ {target} ecrit. {CONF.name} est conserve ; le YAML gagne des "
+             f"qu'il existe.")
+    return 0
+
+
+cmd_migrate_conf.no_engine = False
+
+
 def cmd_init(a, e):
     """Première installation, en une commande : le store, la config de départ, et
     l'unité du worker pour l'init détecté. Chaque étape est idempotente, et c'est
@@ -288,6 +423,30 @@ def cmd_init(a, e):
 cmd_init.no_engine = True                 # tourne avant qu'il y ait une config
 
 
+def cmd_elevation(a, e):
+    """Elevation trail: auditd names who became root, the shell history says what
+    surrounded it. Needs no config and no privilege of its own."""
+    if a.rules:
+        print(elevation.render_rules(), end="")
+        return 0
+    blind = elevation.source_error()
+    if blind:
+        print(f"trace d'elevation indisponible.\n{blind}", file=sys.stderr)
+        return 1
+    try:
+        rows = elevation.elevations(audit.parse_since(a.since), window=a.window,
+                                    context=a.context)
+    except elevation.AtuinUnavailable as exc:
+        print(f"contexte indisponible.\n    {exc}", file=sys.stderr)
+        return 1
+    if a.json:
+        print(json.dumps(rows, ensure_ascii=False))
+        return 0
+    print(elevation.render(rows, f" depuis {a.since}"))
+    return 0
+cmd_elevation.no_engine = True            # lisible sans store ni secrets.conf
+
+
 def cmd_audit(a, e):
     """Unified timeline: who reached what, when, from where, and what changed.
     Reads existing logs with privileges the account already has (docker + wheel)."""
@@ -321,7 +480,7 @@ def cmd_audit(a, e):
 
 _FAMILIES = [
     ("mise en place", ["init"]),
-    ("inventaire & santé", ["list", "status", "check", "doctor", "audit", "leaks"]),
+    ("inventaire & santé", ["list", "status", "check", "doctor", "audit", "elevation", "leaks"]),
     ("rotation & application", ["plan", "rotate", "apply", "render", "verify-render"]),
     ("valeurs", ["get", "set", "gen", "add", "run"]),
     ("adoption", ["scan", "import", "adopt"]),
@@ -368,6 +527,15 @@ def build_parser():
     only = (("--only",), {})
     yes = (("--yes",), {"action": "store_true"})
 
+    add("host", "posture de la machine declaree par `egress:` et `audit:`", cmd_host,
+        (("--write",), {"action": "store_true", "help": "rendre les fichiers dans le store"}),
+        (("--show",), {"action": "store_true", "help": "afficher les regles rendues"}))
+    add("migrate-conf", "convertit secrets.conf (INI) en secrets.yaml declaratif",
+        cmd_migrate_conf, yes,
+        (("--force",), {"action": "store_true", "help": "ecraser un secrets.yaml existant"}),
+        (("--show",), {"action": "store_true", "help": "afficher tout le rendu"}),
+        (("--in-place",), {"action": "store_true",
+                           "help": "reecrire le fichier actuel au lieu d'en creer un"}))
     add("init", "première installation : store, config de départ, service du worker",
         cmd_init,
         (("--dir",), {"default": "", "help": "autre emplacement du store, épinglé "
@@ -376,7 +544,8 @@ def build_parser():
                              "help": "ne pas toucher à l'init système"}),
         (("--unit",), {"choices": ["systemd", "openrc"], "default": "",
                        "help": "imprimer l'unité sur stdout et sortir"}), yes)
-    add("list", "secrets, formats, groupes, services cibles (aucune valeur)", cmd_list)
+    add("list", "secrets groupes par famille : mots de passe d'un cote, cles API de l'autre",
+        cmd_list, (("--flat",), {"action": "store_true"}))
     add("check", "cohérence de la config, valeurs présentes, permissions", cmd_check)
     add("verify-render", "vérifie que render() reproduit les rendered actuels", cmd_verify_render)
     add("render", "écrit rendered/<svc>.env depuis config + valeurs", cmd_render)
@@ -414,6 +583,13 @@ def build_parser():
         (("--service",), {"default": ""}), (("--ip",), {"default": ""}),
         (("--user",), {"default": ""}), (("--since",), {"default": "7d"}),
         (("--denied",), {"action": "store_true"}), (("--limit",), {"type": int, "default": 200}),
+        (("--json",), {"action": "store_true"}))
+    add("elevation", "qui est passé root, quand, via quoi, et ce qu'il faisait autour",
+        cmd_elevation,
+        (("--since",), {"default": "24h"}),
+        (("--window",), {"type": int, "default": None}),
+        (("--context",), {"choices": sorted(elevation.CONTEXT_PROVIDERS), "default": None}),
+        (("--rules",), {"action": "store_true"}),
         (("--json",), {"action": "store_true"}))
     add("leaks", "cherche des valeurs gérées présentes en clair dans le repo", cmd_leaks,
         (("--staged",), {"action": "store_true"}))

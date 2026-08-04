@@ -32,17 +32,26 @@
 .row.click{cursor:pointer}
 .row.on{background:rgba(192,36,44,.07)}
 
-.g-coffre{grid-template-columns:26px 1.7fr 88px 96px 1.25fr 108px 132px}
+.g-coffre{grid-template-columns:22px 1.5fr 132px 112px 1fr 104px 124px}
 .g-rot{grid-template-columns:1.8fr 96px 104px 118px 100px}
 .g-recent{grid-template-columns:1fr 92px 96px}
 .g-user{grid-template-columns:1.4fr 260px 130px 110px}
+.g-files{grid-template-columns:2fr 124px 1.4fr 92px}
+.g-prop{grid-template-columns:30px 1fr 1fr 88px 92px 72px}
 .g-audit{grid-template-columns:92px 78px 1fr 1.05fr 96px 2fr}
 .g-audit .mono{font-size:11px}
 .o-allow{color:var(--ok)}.o-deny{color:var(--acc3);font-weight:600}
 .o-change{color:var(--warn)}.o-login{color:var(--info)}
 .o-check{color:var(--info)}.o-info{color:var(--dim)}
 @media(max-width:900px){.g-audit{grid-template-columns:78px 64px 1fr 1fr}
-  .g-audit>div:nth-child(5),.g-audit>div:nth-child(6){display:none}}
+  .g-audit>div:nth-child(5),.g-audit>div:nth-child(6){display:none}
+  /* Le coffre porte deux etiquettes en toutes lettres ("mot de passe",
+     "sur demande") : sous 900px elles ne tiennent plus a cote du nom et de la
+     valeur. On sacrifie la date et les services, pas les deux axes. */
+  .g-coffre{grid-template-columns:22px 1.4fr 122px 104px 1fr}
+  .g-coffre>div:nth-child(6),.g-coffre>div:nth-child(7){display:none}
+  .g-files{grid-template-columns:2fr 116px 1.2fr}
+  .g-files>div:nth-child(4){display:none}}
 
 .cell{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .nm{font-family:var(--mono);font-size:12.5px;color:#ececec}
@@ -56,8 +65,15 @@
   background:rgba(255,255,255,.05);border:1px solid var(--bd2);color:#b9b9b9;white-space:nowrap}
 .tag.g{border-color:color-mix(in srgb,var(--g) 45%,transparent);color:var(--g);background:transparent}
 .tag.api{background:rgba(90,160,255,.10);border-color:rgba(90,160,255,.40);color:var(--info)}
+/* Family badge: the strongest signal in the row, so it is filled rather than outlined.
+   Yellow = third-party key, red = auto-rotated password. */
+.tag.cls{background:color-mix(in srgb,var(--c) 13%,transparent);
+  border-color:color-mix(in srgb,var(--c) 45%,transparent);color:var(--c);font-weight:500}
 .chip{display:inline-block;font-family:var(--mono);font-size:10.5px;padding:4px 11px;border-radius:20px;
   background:rgba(255,255,255,.05);border:1px solid var(--bd2);color:#c5c5c5;margin:0 4px 4px 0}
+/* un chip qui ouvre un secret : il se comporte en bouton, il doit le montrer */
+.chip[data-open]{cursor:pointer}
+.chip[data-open]:hover{border-color:rgba(192,36,44,.55);color:#ececec}
 
 /* ── controls ── */
 input.search{flex:1;max-width:420px;padding:11px 16px;border-radius:10px;
@@ -69,6 +85,10 @@ input.search:focus{border-color:rgba(192,36,44,.55);box-shadow:0 0 0 3px rgba(19
   letter-spacing:.05em;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08);
   color:#9a9a9a}
 .filt.on{background:rgba(192,36,44,.12);border-color:rgba(192,36,44,.4);color:var(--acc4)}
+/* Family filter: carries its own colour so the button matches the badges it selects. */
+.filt.cls{color:color-mix(in srgb,var(--c) 78%,#fff)}
+.filt.cls.on{background:color-mix(in srgb,var(--c) 14%,transparent);
+  border-color:color-mix(in srgb,var(--c) 48%,transparent);color:var(--c)}
 
 .btn{font-family:var(--mono);font-size:10px;padding:6px 12px;border-radius:7px;
   background:rgba(255,255,255,.05);border:1px solid var(--bd2);color:#cfcfcf;position:relative}
@@ -87,3 +107,27 @@ input.search:focus{border-color:rgba(192,36,44,.55);box-shadow:0 0 0 3px rgba(19
 .warn{font-size:11.5px;color:#e0b45e;background:rgba(217,161,59,.10);
   border:1px solid rgba(217,161,59,.30);border-radius:8px;padding:8px 11px}
 .err{color:var(--acc3);font-size:12px;min-height:1.2em;font-family:var(--mono)}
+
+/* Coffre : un bandeau par objet. Il ne decale pas les lignes -- indenter le
+   groupe desalignait chaque cellule de l'en-tete, qui lui reste a plat. */
+.grp { margin-bottom: 10px; }
+.grp-hd {
+  display: flex; align-items: baseline; gap: 10px;
+  padding: 12px 20px 7px;
+  border-bottom: 1px solid color-mix(in srgb, var(--c) 35%, transparent);
+  margin-bottom: 2px;
+}
+.grp-nm {
+  font-weight: 600; font-size: 11px; letter-spacing: .09em; text-transform: uppercase;
+  color: var(--c); white-space: nowrap;
+}
+.grp-hint {
+  font-size: 11px; color: var(--dim); flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.grp-n { font-size: 11px; color: var(--dim); font-variant-numeric: tabular-nums; }
+
+/* Un tag ne doit jamais pousser sa colonne. `text-overflow` ne fait rien sur un
+   element inline : il lui faut inline-block pour que la troncature s'applique. */
+.row .tag { display: inline-block; max-width: 100%; overflow: hidden;
+  text-overflow: ellipsis; vertical-align: middle; }

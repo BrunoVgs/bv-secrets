@@ -1,16 +1,18 @@
 """Build the served pages: login and dashboard."""
 import json
 
-from bvsecrets.config import ALL_KINDS, GEN_KINDS, ROLES
+from bvsecrets.config import ALL_KINDS, GEN_KINDS, ROLES, SINK_TYPES
+from bvsecrets.locations import writable_schemes
 
-from . import access, inventory
+from . import access, files, inventory
 from .html import esc, page
 
 NAV_ITEMS = [
     ("overview", "Vue d'ensemble", None),
     ("coffre", "Coffre", "secrets"),
-    ("rotation", "Rotation", "auto"),
     ("comptes", "Comptes", None),
+    ("fichiers", "Fichiers", "files"),
+    ("rotation", "Rotation", "auto"),
     ("acces", "Accès &amp; rôles", "services"),
     ("audit", "Audit", None),
     ("docs", "Docs", None),
@@ -38,6 +40,7 @@ def dashboard(csrf: str) -> str:
     rows = inventory.list_data()
     auto = inventory.auto_targets()
     services = access.matrix()["services"]
+    filedata = files.data()
     # "<" is escaped: the payload can't close the <script> tag carrying it.
     boot = json.dumps({
         "csrf": csrf,
@@ -46,8 +49,14 @@ def dashboard(csrf: str) -> str:
         "kinds": {"all": sorted(ALL_KINDS - {"manual"}), "gen": sorted(GEN_KINDS)},
         "groups": ["auto", "app", "careful", "manual"],
         "roles": ROLES,
+        "files": filedata["files"],
+        "adoptRoots": filedata["roots"],
+        # The add form offers exactly the sink types the worker accepts, so the UI
+        # can't propose one that is then refused.
+        "sinkTypes": sorted(set(SINK_TYPES) | writable_schemes()),
     }).replace("<", "\\u003c")
-    counts = {"secrets": len(rows), "auto": len(auto), "services": len(services)}
+    counts = {"secrets": len(rows), "auto": len(auto), "services": len(services),
+              "files": len(filedata["files"])}
     head = ("<tr><th>service</th>"
             + "".join(f"<th>{esc(r)}</th>" for r in ROLES)
             + "<th>surfaces</th></tr>")
