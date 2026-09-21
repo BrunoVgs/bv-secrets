@@ -27,7 +27,7 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+ROOT=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 say()  { printf '\n== %s\n' "$1"; }
 ok()   { printf '   ok   %s\n' "$1"; }
 warn() { printf '   !!   %s\n' "$1"; }
@@ -43,6 +43,7 @@ as_root() {
 
 # --- distribution ----------------------------------------------------------- #
 DISTRO=unknown
+# shellcheck source=/dev/null
 [ -r /etc/os-release ] && . /etc/os-release && DISTRO="${ID:-unknown}"
 case "$DISTRO" in
   alpine) PKG_INSTALL="apk add --no-progress" ;;
@@ -56,17 +57,21 @@ if [ -n "$PKG_INSTALL" ]; then ok "$DISTRO"; else warn "$DISTRO non gere: instal
 
 # Package names differ per distro; only these three sets are needed.
 case "$DISTRO" in
-  alpine) PKGS="python3 docker docker-cli-compose caddy" ; SVC_MGR=openrc ;;
-  void)   PKGS="python3 docker docker-compose caddy"     ; SVC_MGR=runit  ;;
-  debian|ubuntu) PKGS="python3 docker.io docker-compose-v2 caddy" ; SVC_MGR=systemd ;;
-  *)      PKGS="" ; SVC_MGR=unknown ;;
+  alpine) PKGS="python3 docker docker-cli-compose caddy" ;;
+  void)   PKGS="python3 docker docker-compose caddy" ;;
+  debian|ubuntu) PKGS="python3 docker.io docker-compose-v2 caddy" ;;
+  *)      PKGS="" ;;
 esac
 
 # --- 1. packages ------------------------------------------------------------ #
 if [ "$PACKAGES" = 1 ] && [ -n "$PKGS" ]; then
   say "paquets"
-  [ "$DISTRO" = alpine ] && as_root apk update >/dev/null 2>&1 || true
-  [ "$DISTRO" = debian ] || [ "$DISTRO" = ubuntu ] && as_root apt-get update -qq >/dev/null 2>&1 || true
+  # Rafraichir l'index est un confort : son echec ne doit pas arreter l'install.
+  if [ "$DISTRO" = alpine ]; then
+    as_root apk update >/dev/null 2>&1 || true
+  elif [ "$DISTRO" = debian ] || [ "$DISTRO" = ubuntu ]; then
+    as_root apt-get update -qq >/dev/null 2>&1 || true
+  fi
   # shellcheck disable=SC2086
   as_root $PKG_INSTALL $PKGS || warn "installation partielle, voir ci-dessus"
 fi
@@ -139,8 +144,17 @@ INIT_ARGS=""
 [ "$SERVICE" = 0 ] && INIT_ARGS="--no-service"
 [ -n "$STORE" ] && INIT_ARGS="$INIT_ARGS --dir $STORE"
 # shellcheck disable=SC2086
-if "$ROOT/bin/bv-secrets" init $INIT_ARGS; then ok "store et config en place"
-else warn "init incomplet (voir ci-dessus)"; fi
+if ! "$ROOT/bin/bv-secrets" init $INIT_ARGS; then
+  # Sans store, init n'a pose ni config ni valeurs : il n'y a pas d'install.
+  # En faire un simple avertissement laissait le script continuer, annoncer
+  # « config de depart installee » pour un fichier absent, et finir sur
+  # « termine » — la machine paraissait prete alors que `bv-secrets list`
+  # repondait « config introuvable ». init vient d'imprimer la commande a
+  # lancer ; s'arreter ici est la seule fin honnete.
+  warn "init incomplet : rien n'a ete installe, lancer la commande ci-dessus"
+  exit 1
+fi
+ok "store et config en place"
 
 # --- 5. verification -------------------------------------------------------- #
 say "verification"
