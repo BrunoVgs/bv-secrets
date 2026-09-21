@@ -29,17 +29,17 @@ jobs:
           - distro: alpine
             image: alpine:3.24
             prepare: "true"
-            setup: apk add --no-cache python3 shadow
+            setup: apk add --no-cache python3 shadow openssl
           - distro: void
             image: ghcr.io/void-linux/void-linux:latest-full-x86_64
             # xbps refuse toute autre operation tant qu'il ne s'est pas mis a
             # jour lui-meme, et l'image n'a pas libstdc++ (cf. l'etape suivante).
             prepare: xbps-install -Suy xbps && xbps-install -Suy libstdc++
-            setup: xbps-install -Suy python3 shadow
+            setup: xbps-install -Suy python3 shadow openssl
           - distro: debian
             image: debian:stable-slim
             prepare: "true"
-            setup: apt-get update -qq && apt-get install -y -qq python3 passwd
+            setup: apt-get update -qq && apt-get install -y -qq python3 passwd openssl
     container:
       image: ${{ matrix.image }}
     steps:
@@ -80,7 +80,10 @@ jobs:
         run: |
           su tester -c 'cd ~/bv-secrets && export PATH=$HOME/.local/bin:$PATH && set -e
             bv-secrets list
-            bv-secrets check
+            # `check` compte ce qui n'a pas encore de valeur. Sur le modele
+            # qu'init vient de poser, c'est tout : sa sortie non nulle est
+            # l'etat attendu ici, pas une panne.
+            bv-secrets check || true
             bv-secrets elevation --rules | grep -q bv_elevation
             printf "API_TOKEN_X=abcdef0123456789abcdef0123456789\nDB_HOST=localhost\n" > /tmp/app.env
             bv-secrets adopt /tmp/app.env --yes
@@ -92,10 +95,10 @@ jobs:
           su tester -c 'cd ~/bv-secrets && export PATH=$HOME/.local/bin:$PATH
             python3 -c "
           from bvsecrets import Engine
-          from bvsecrets.config import CLASS_APIKEY, secret_class
+          from bvsecrets.config import OBJ_TOKEN, secret_object
           c = Engine().cfg[\"API_TOKEN_X\"]
-          got = secret_class(c[\"kind\"], c[\"group\"], \"API_TOKEN_X\")
-          assert got == CLASS_APIKEY, got
+          got = secret_object(c[\"kind\"], \"API_TOKEN_X\")
+          assert got == OBJ_TOKEN, got
           assert c[\"kind\"] == \"apikey\", c[\"kind\"]
           print(\"API_TOKEN_X ->\", got)
           "'

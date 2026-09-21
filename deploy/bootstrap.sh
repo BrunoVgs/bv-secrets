@@ -90,6 +90,12 @@ if docker compose version >/dev/null 2>&1; then ok "docker compose (plugin)"
 elif have docker-compose; then ok "docker-compose (standalone)"
 else warn "docker compose absent"; MISSING="$MISSING docker-compose"; fi
 
+# Le miroir chiffre du store passe par la commande openssl : sans elle
+# l'install se termine bien, et c'est `rotate` qui casse plus tard, sur un
+# FileNotFoundError brut. Le dire ici, ou ca se repare.
+if have openssl; then ok "openssl $(openssl version 2>/dev/null | head -1)"
+else warn "openssl absent"; MISSING="$MISSING openssl"; fi
+
 if have caddy; then ok "caddy $(caddy version 2>/dev/null | head -1)"
 else
   warn "caddy absent (facultatif: inutile si le reverse-proxy est ailleurs)"
