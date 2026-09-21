@@ -28,16 +28,27 @@ jobs:
         include:
           - distro: alpine
             image: alpine:3.24
+            prepare: "true"
             setup: apk add --no-cache python3 shadow
           - distro: void
             image: ghcr.io/void-linux/void-linux:latest-full-x86_64
+            # xbps refuse toute autre operation tant qu'il ne s'est pas mis a
+            # jour lui-meme, et l'image n'a pas libstdc++ (cf. l'etape suivante).
+            prepare: xbps-install -Suy xbps && xbps-install -Suy libstdc++
             setup: xbps-install -Suy python3 shadow
           - distro: debian
             image: debian:stable-slim
+            prepare: "true"
             setup: apt-get update -qq && apt-get install -y -qq python3 passwd
     container:
       image: ${{ matrix.image }}
     steps:
+      # checkout est une action JS, donc du node, donc de la libstdc++ que
+      # l'image Void n'a pas : le job mourait avant sa premiere etape. Un `run:`
+      # s'execute dans le shell du conteneur, lui, et peut donc passer devant.
+      - name: Ce dont le runner a besoin pour tourner ici
+        run: ${{ matrix.prepare }}
+
       - uses: actions/checkout@v4
 
       - name: Base tooling
