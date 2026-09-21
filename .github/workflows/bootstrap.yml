@@ -75,14 +75,14 @@ jobs:
         run: |
           su tester -c 'cd ~/bv-secrets && export PATH=$HOME/.local/bin:$PATH
             python3 -c "
-from bvsecrets import Engine
-from bvsecrets.config import CLASS_APIKEY, secret_class
-c = Engine().cfg[\"API_TOKEN_X\"]
-got = secret_class(c[\"kind\"], c[\"group\"], \"API_TOKEN_X\")
-assert got == CLASS_APIKEY, got
-assert c[\"kind\"] == \"apikey\", c[\"kind\"]
-print(\"API_TOKEN_X ->\", got)
-"'
+          from bvsecrets import Engine
+          from bvsecrets.config import CLASS_APIKEY, secret_class
+          c = Engine().cfg[\"API_TOKEN_X\"]
+          got = secret_class(c[\"kind\"], c[\"group\"], \"API_TOKEN_X\")
+          assert got == CLASS_APIKEY, got
+          assert c[\"kind\"] == \"apikey\", c[\"kind\"]
+          print(\"API_TOKEN_X ->\", got)
+          "'
 
       - name: Re-running changes nothing
         run: su tester -c 'cd ~/bv-secrets && ./deploy/bootstrap.sh --no-packages --no-service'
