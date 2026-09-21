@@ -51,7 +51,11 @@ def qui_update(new):
 
     def call(path, data=None, cookie=None, method=None):
         body = json.dumps(data).encode() if data is not None else None
-        headers = {'Content-Type': 'application/json'}
+        # qui refuse toute ecriture sans cet en-tete (protection CSRF, apparue
+        # avec la version du 2026-09-21) : sans lui le PUT repond 403 « Missing
+        # X-Requested-With header » et la propagation echoue en silence.
+        headers = {'Content-Type': 'application/json',
+                   'X-Requested-With': 'XMLHttpRequest'}
         if cookie:
             headers['Cookie'] = cookie
         _s, b, h = http(base + path, body, headers, method)
