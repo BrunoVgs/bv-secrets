@@ -1,3 +1,4 @@
+import json
 import os
 import subprocess
 import sys
@@ -112,21 +113,53 @@ class TestApikeyDeclarationIsOneWay(unittest.TestCase):
         self.assertNotIn("NAME/KIND", self._check("WIREGUARD_PRIVATE_KEY", "opaque"))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TestFileInventoryIsComplete(unittest.TestCase):
     """La vue Fichiers ne montrait que les sinks `file:` et `envfile:`, soit 4
     entrees sur une machine qui en ecrit vingt. Les fichiers rendus sont
     l'essentiel de ce que l'outil pose sur le disque : les cacher donnait une
     vue faussement vide."""
 
+    # L'inventaire se deduit d'une declaration, pas de la machine : le
+    # `secrets.conf` de l'hote n'existe pas sur un runner, et le lecteur de conf
+    # est fige a l'import du paquet. D'ou le sous-processus, comme plus haut,
+    # sur une declaration minimale qui porte les deux modes d'ecriture.
+    CONF = """\
+[A_PASSWORD]
+kind  = password
+group = manual
+sinks =
+    env:homepage#HOMEPAGE_VAR_A
+
+[B_PASSWORD]
+kind  = password
+group = manual
+sinks =
+    envfile:/etc/app/app.env#B
+"""
+
+    @classmethod
+    def setUpClass(cls):
+        root = Path(__file__).resolve().parent.parent
+        cls._tmp = tempfile.TemporaryDirectory()
+        d = cls._tmp.name
+        (Path(d) / "secrets.conf").write_text(cls.CONF, encoding="utf-8")
+        env = dict(os.environ, PYTHONPATH=str(root),
+                   BV_SECRETS_CONF=str(Path(d) / "secrets.conf"),
+                   BV_SECRETS_DIR=d, BV_CONFIG=str(Path(d) / "absent.ini"))
+        r = subprocess.run(
+            [sys.executable, "-c",
+             "import json; from web.files import data; print(json.dumps(data()))"],
+            env=env, cwd=d, capture_output=True, text=True)
+        if r.returncode:
+            raise AssertionError(r.stderr)
+        cls.inventory = json.loads(r.stdout)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._tmp.cleanup()
+
     def _data(self):
-        import sys
-        sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-        from web.files import data
-        return data()
+        return self.inventory
 
     def test_rendered_files_are_listed(self):
         d = self._data()
@@ -219,3 +252,7 @@ class TestCamelCaseNamesAreRead(unittest.TestCase):
         from bvsecrets.adopt import looks_secret
         self.assertFalse(looks_secret("logLevel", "info"))
         self.assertFalse(looks_secret("maxRetries", "3"))
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -95,7 +95,17 @@ class TestDiffIsHonest(unittest.TestCase):
     def test_unreadable_target_is_not_reported_as_conforming(self):
         p = self._plan()
 
-        class Boom(Path):
+        # Sous-classer Path ne marche qu'a partir de 3.12 : avant, __new__ va
+        # chercher un _flavour que la sous-classe n'a pas. `diff` ne demande de
+        # toute facon qu'une chose a sa cible, la lire -- c'est ce contrat-la,
+        # et lui seul, que ce test doit tenir.
+        class Boom:
+            def __init__(self, path):
+                self._path = path
+
+            def __str__(self):
+                return self._path
+
             def read_text(self, *a, **k):
                 raise PermissionError
 
