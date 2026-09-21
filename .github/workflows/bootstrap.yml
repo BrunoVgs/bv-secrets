@@ -20,16 +20,21 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # Pas de sudo dans l'outillage de base : c'est le chemin SANS privilege
+        # qui est teste ici, et bootstrap.sh ne bascule le store sous $HOME que
+        # si aucun outil d'elevation n'est installe. Poser sudo faisait viser
+        # /opt a l'install, que le compte tester ne peut pas creer, pendant que
+        # l'etape suivante exigeait un store sous $HOME : le job se contredisait.
         include:
           - distro: alpine
             image: alpine:3.24
-            setup: apk add --no-cache python3 shadow sudo
+            setup: apk add --no-cache python3 shadow
           - distro: void
             image: ghcr.io/void-linux/void-linux:latest-full-x86_64
-            setup: xbps-install -Suy python3 shadow sudo
+            setup: xbps-install -Suy python3 shadow
           - distro: debian
             image: debian:stable-slim
-            setup: apt-get update -qq && apt-get install -y -qq python3 passwd sudo
+            setup: apt-get update -qq && apt-get install -y -qq python3 passwd
     container:
       image: ${{ matrix.image }}
     steps:
