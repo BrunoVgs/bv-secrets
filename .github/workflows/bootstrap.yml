@@ -80,9 +80,9 @@ jobs:
         run: |
           su tester -c 'cd ~/bv-secrets && export PATH=$HOME/.local/bin:$PATH && set -e
             bv-secrets list
-            # `check` compte ce qui n'a pas encore de valeur. Sur le modele
-            # qu'init vient de poser, c'est tout : sa sortie non nulle est
-            # l'etat attendu ici, pas une panne.
+            # `check` denombre les valeurs encore absentes. Sur le modele
+            # que init vient de poser, elles le sont toutes : sa sortie non
+            # nulle est normale ici, et non une panne.
             bv-secrets check || true
             bv-secrets elevation --rules | grep -q bv_elevation
             printf "API_TOKEN_X=abcdef0123456789abcdef0123456789\nDB_HOST=localhost\n" > /tmp/app.env
