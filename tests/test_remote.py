@@ -58,6 +58,9 @@ class TwoInstances(unittest.TestCase):
             "BV_WORKER_BIND": "127.0.0.1",
             "BV_WORKER_PORT": str(self.port),
             "BV_WORKER_KEY": KEY,
+            # Bas exprès : un blocage se teste en trois échecs, pas en dix.
+            "BV_WORKER_MAX_FAILS": "3",
+            "BV_WORKER_BLOCK_SECONDS": "60",
             "NO_COLOR": "1",
         }
         self.worker = subprocess.Popen(
@@ -111,19 +114,28 @@ class TwoInstances(unittest.TestCase):
                 time.sleep(0.2)
         self.fail("l'écouteur du worker n'a jamais répondu")
 
-    def _get(self, path, key=KEY):
+    @staticmethod
+    def _auth(method, path, body, key):
+        """Les en-tetes signes, ou rien du tout si on veut tester l'absence."""
+        from bvsecrets import sign
+        return sign.headers(key, method, path, body) if key else {}
+
+    def _get(self, path, key=KEY, headers=None):
         req = urllib.request.Request(f"http://127.0.0.1:{self.port}{path}")
-        if key:
-            req.add_header("Authorization", f"Bearer {key}")
+        for name, value in (self._auth("GET", path, b"", key)
+                            if headers is None else headers).items():
+            req.add_header(name, value)
         with urllib.request.urlopen(req, timeout=5) as r:
             return r.status, json.loads(r.read().decode())
 
-    def _post(self, payload, key=KEY):
+    def _post(self, payload, key=KEY, headers=None):
+        body = json.dumps(payload).encode()
         req = urllib.request.Request(f"http://127.0.0.1:{self.port}/v1/jobs",
-                                     data=json.dumps(payload).encode(), method="POST")
+                                     data=body, method="POST")
         req.add_header("Content-Type", "application/json")
-        if key:
-            req.add_header("Authorization", f"Bearer {key}")
+        for name, value in (self._auth("POST", "/v1/jobs", body, key)
+                            if headers is None else headers).items():
+            req.add_header(name, value)
         with urllib.request.urlopen(req, timeout=5) as r:
             return r.status, json.loads(r.read().decode())
 
@@ -152,6 +164,39 @@ class TwoInstances(unittest.TestCase):
             with self.assertRaises(urllib.error.HTTPError) as cm:
                 self._post({"action": action})
             self.assertEqual(cm.exception.code, 403, action)
+
+    def test_a_captured_request_cannot_be_replayed(self):
+        """Le coeur de la signature : les MEMES en-tetes deux fois. Un porteur
+        passerait indefiniment, une requete signee ne vaut qu'une fois."""
+        from bvsecrets import sign
+        body = json.dumps({"action": "doctor", "only": []}).encode()
+        captured = sign.headers(KEY, "POST", "/v1/jobs", body)
+        status, _ = self._post({"action": "doctor", "only": []}, headers=captured)
+        self.assertEqual(status, 202)
+        with self.assertRaises(urllib.error.HTTPError) as cm:
+            self._post({"action": "doctor", "only": []}, headers=captured)
+        self.assertEqual(cm.exception.code, 401)
+
+    def test_a_tampered_body_breaks_the_signature(self):
+        from bvsecrets import sign
+        body = json.dumps({"action": "doctor", "only": []}).encode()
+        headers = sign.headers(KEY, "POST", "/v1/jobs", body)
+        with self.assertRaises(urllib.error.HTTPError) as cm:
+            # signature valide, mais pour un AUTRE corps
+            self._post({"action": "rotate", "only": ["APP_SECRET"]}, headers=headers)
+        self.assertEqual(cm.exception.code, 401)
+
+    def test_repeated_failures_block_the_source(self):
+        """Trois echecs (BV_WORKER_MAX_FAILS) et la source est ecartee : deviner
+        une cle devient impraticable sans jamais gener une instance legitime,
+        qui ne produit aucun echec."""
+        for _ in range(3):
+            with self.assertRaises(urllib.error.HTTPError) as cm:
+                self._post({"action": "doctor"}, key="pas-la-bonne")
+            self.assertEqual(cm.exception.code, 401)
+        with self.assertRaises(urllib.error.HTTPError) as cm:
+            self._post({"action": "doctor"}, key=KEY)   # même la BONNE clé
+        self.assertEqual(cm.exception.code, 429)
 
     def test_health_says_nothing_without_the_key(self):
         _, anon = self._get("/v1/health", key=None)

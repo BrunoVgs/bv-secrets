@@ -1,6 +1,7 @@
 """Pousser un job chez une autre instance bv-secrets, et suivre son execution.
 
-Symetrique de `worker/listen.py`. Rien n'est execute ici : on depose un job dans
+Symetrique de `worker/listen.py`. Chaque requete est signee (`bvsecrets.sign`) :
+la cle partagee ne circule jamais et une requete capturee ne peut pas etre rejouee. Rien n'est execute ici : on depose un job dans
 le spool de l'hote vise, puis on relit son resultat jusqu'a ce qu'il soit fini.
 Le journal du worker distant est reemis tel quel dans le journal local, pour
 qu'une poussee vers le Xeon se lise comme une operation locale.
@@ -10,7 +11,7 @@ import time
 import urllib.error
 import urllib.request
 
-from . import hosts
+from . import hosts, sign
 from .config import REMOTE_TIMEOUT, ConfigError
 
 CONNECT_TIMEOUT = 10
@@ -28,10 +29,13 @@ def _call(host: str, method: str, path: str, payload=None, timeout=CONNECT_TIMEO
         raise RemoteError(
             f"{host}: aucune clé partagée. La poser dans BV_HOST_KEY_{host.upper()} "
             f"ou {hosts.key_path(host)}")
-    body = json.dumps(payload).encode("utf-8") if payload is not None else None
-    req = urllib.request.Request(base + path, data=body, method=method)
-    req.add_header("Authorization", f"Bearer {key}")
-    if body is not None:
+    body = json.dumps(payload).encode("utf-8") if payload is not None else b""
+    req = urllib.request.Request(base + path, data=body or None, method=method)
+    # La cle ne part pas : elle signe. Un en-tete porteur se rejoue, une signature
+    # couvrant methode, chemin, horodatage, nonce et corps ne se rejoue pas.
+    for header, value in sign.headers(key, method, path, body).items():
+        req.add_header(header, value)
+    if body:
         req.add_header("Content-Type", "application/json")
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -43,7 +47,11 @@ def _call(host: str, method: str, path: str, payload=None, timeout=CONNECT_TIMEO
         except Exception:
             pass
         if e.code == 401:
-            raise RemoteError(f"{host}: clé refusée") from None
+            raise RemoteError(f"{host}: authentification refusée (clé différente "
+                              f"des deux côtés, ou horloges trop écartées)") from None
+        if e.code == 429:
+            raise RemoteError(f"{host}: trop d'échecs, l'hôte bloque "
+                              f"temporairement cette source") from None
         raise RemoteError(f"{host}: HTTP {e.code} {detail}".strip()) from None
     except urllib.error.URLError as e:
         raise RemoteError(f"{host}: injoignable ({e.reason})") from None

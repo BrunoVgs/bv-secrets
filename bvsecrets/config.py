@@ -243,6 +243,19 @@ SUPERUSER = ROLES[0]
 ROTATE_GROUPS = {"auto", "app"}
 
 
+# Taille au-dela de laquelle `leaks` ne lit plus un fichier. Au-dessus, ce n'est
+# pas une configuration : c'est une ROM, une video, une base. Les decoder en
+# entier pour y chercher une chaine rendait la commande inutilisable des que la
+# racine compose heberge aussi des donnees -- elle ne rendait jamais la main.
+LEAKS_MAX_BYTES = int(_setting("BV_LEAKS_MAX_BYTES", "1048576") or "1048576")
+
+# Fenetre de validite d'une requete signee entre instances, en secondes. Au-dela
+# elle est refusee : c'est ce qui borne la memoire des nonces.
+WORKER_SKEW = int(_setting("BV_WORKER_SKEW", "300") or "300")
+# Echecs d'authentification tolerés par source avant blocage temporaire.
+WORKER_MAX_FAILS = int(_setting("BV_WORKER_MAX_FAILS", "10") or "10")
+WORKER_BLOCK_SECONDS = int(_setting("BV_WORKER_BLOCK_SECONDS", "300") or "300")
+
 # Ecouteur du worker. Vide = desactive : une instance n'accepte de job distant
 # que si on l'a explicitement dit, et on l'attache a wg0, jamais a 0.0.0.0.
 WORKER_BIND = _setting("BV_WORKER_BIND", "")
@@ -287,6 +300,17 @@ def adopt_root_error(path: Path):
 REF = re.compile(r"\{([A-Za-z0-9_]+)\}")
 # A name containing API or TOKEN marks a third-party key -> kind=apikey enforced.
 _API_RE = re.compile(r"(?:^|_)(?:API|TOKEN)(?:_|$)")
+
+
+# Un nom finissant par _USER designe un identifiant de compte, pas une valeur a
+# cacher : il est publie par construction (URL de depot, README, marque-pages).
+# `leaks` s'en sert pour ne pas noyer ses vraies trouvailles sous le bruit. Cela
+# ne change RIEN au stockage ni a la rotation : le secret reste gere comme avant.
+_IDENT_RE = re.compile(r"(?:^|_)USER$")
+
+
+def is_identifier(name: str) -> bool:
+    return bool(_IDENT_RE.search(name.upper()))
 
 
 def looks_like_apikey(name: str) -> bool:

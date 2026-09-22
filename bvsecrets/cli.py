@@ -11,7 +11,7 @@ import secrets as pysecrets
 
 from . import (adopt, audit, conf_yaml, conffile, elevation, host, hosts,
                remote, service, ui, validate)
-from .config import (CONF, COMPOSE_DIR, CONFIG_FILE, GEN_KINDS, KEYFILE,
+from .config import (CONF, COMPOSE_DIR, CONFIG_FILE, GEN_KINDS, LEAKS_MAX_BYTES, is_identifier, KEYFILE,
                      LOCAL, MASTER, MIRROR, PROJECT_DIR, RENDER_DIR, SECRETS_DIR,
                      OBJ_ORDER, is_yaml, looks_like_apikey, secret_object,
                      secret_rotation)
@@ -288,17 +288,61 @@ def cmd_open(a, e):
     sys.stdout.write(r.stdout.decode())
 
 
+def _sink_paths(engine) -> dict:
+    """-> {NOM: {chemins que ses sinks ecrivent}}.
+
+    Une valeur trouvee a l'endroit ou on l'a deliberement ecrite n'est pas une
+    fuite, c'est le fonctionnement nominal. Sans ca, chaque sink fichier se
+    signalait lui-meme a chaque scan et noyait les vraies trouvailles."""
+    out = {}
+    for name, c in engine.cfg.items():
+        paths = set()
+        for sink in c["sinks"]:
+            scheme, _, rest = sink.partition(":")
+            if scheme in ("env", "mysql", "cmd", ""):
+                continue                      # rendu ailleurs, ou sans fichier
+            target = rest.partition("#")[0].strip()
+            if scheme == "sqlite":
+                target = target.partition("@")[0]
+            target = target.partition(":")[0]  # `file:/chemin:0600`
+            if target.startswith("/"):
+                paths.add(Path(target))
+        out[name] = paths
+    return out
+
+
 def _leaks_tree(values):
-    hits = []
+    """Fouille la racine compose. Elle heberge aussi les DONNEES des services --
+    ROMs, enregistrements, bases -- et les decoder en entier pour y chercher une
+    chaine ne rendait jamais la main. Au-dela de LEAKS_MAX_BYTES ce n'est plus une
+    configuration, et un fichier binaire ne porte pas une valeur « en clair » au
+    sens ou on la chercherait ici. Les octets sont compares tels quels : aucun
+    decodage, donc aucun cout de conversion."""
+    needles = {k: v.encode() for k, v in values.items()}
+    own = _sink_paths(Engine())
+    hits, skipped = [], 0
     for path in COMPOSE_DIR.rglob("*"):
-        if not path.is_file() or RENDER_DIR in path.parents or path.parent == SECRETS_DIR:
+        if path.is_symlink() or not path.is_file():
+            continue
+        if RENDER_DIR in path.parents or path.parent == SECRETS_DIR:
+            continue
+        # Les entrailles de git ne sont pas « l'arbre » : objets, index et URL de
+        # remote s'y retrouvent sans que personne ne les ait ecrits.
+        if ".git" in path.parts:
             continue
         try:
-            text = path.read_text(errors="ignore")
+            if path.stat().st_size > LEAKS_MAX_BYTES:
+                skipped += 1
+                continue
+            blob = path.read_bytes()
         except OSError:
             continue
-        hits += [f"LEAK  {path}  contient la valeur de {k}" for k, v in values.items() if v in text]
-    return hits
+        if b"\x00" in blob:
+            continue
+        hits += [f"LEAK  {path}  contient la valeur de {k}"
+                 for k, v in needles.items()
+                 if v in blob and path not in own.get(k, ())]
+    return hits, skipped
 
 
 def _leaks_staged(values):
@@ -319,8 +363,18 @@ def _leaks_staged(values):
 def cmd_leaks(a, e):
     """Cherche des valeurs gérées présentes en clair : dans l'arbre, ou --staged
     dans l'index git (pour un hook pre-commit)."""
-    values = {k: v for k, v in e.data.items() if len(v) >= 6}
-    hits = _leaks_staged(values) if a.staged else _leaks_tree(values)
+    values = {k: v for k, v in e.data.items()
+              if len(v) >= 6 and not is_identifier(k)}
+    if a.staged:
+        hits, skipped = _leaks_staged(values), 0
+    else:
+        hits, skipped = _leaks_tree(values)
+    if skipped:
+        # Dire ce qui n'a pas ete regarde : un scan muet sur sa propre couverture
+        # se lit comme une garantie qu'il ne donne pas. Mais ce n'est pas une
+        # trouvaille : le compter ferait echouer un hook pre-commit a chaque fois.
+        print(f"({skipped} fichier(s) > {LEAKS_MAX_BYTES} o non lus — "
+              f"BV_LEAKS_MAX_BYTES pour élargir)")
     return _report(hits, "\nClean — aucune valeur gérée trouvée en clair.")
 
 

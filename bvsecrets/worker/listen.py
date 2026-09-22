@@ -6,16 +6,21 @@ job dans ce meme spool. Aucun code d'execution ici : la boucle le draine comme
 n'importe quel job local, avec les memes privileges et le meme archivage. On
 generalise le transport, pas le modele de securite.
 
-L'ecouteur ne demarre que si `BV_WORKER_BIND` est pose — et on l'attache a
+L'ecouteur ne demarre que si `BV_WORKER_BIND` est pose -- et on l'attache a
 l'adresse wg0 de la machine, jamais a 0.0.0.0.
+
+Les requetes sont SIGNEES (voir `bvsecrets.sign`), pas porteuses d'un jeton : la
+cle ne circule pas, et une requete capturee ne peut pas etre rejouee. Les echecs
+d'authentification sont comptes par source et finissent par la bloquer.
 """
 import json
 import re
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from .. import hosts, spool
-from ..config import WORKER_BIND, WORKER_PORT
+from .. import hosts, sign, spool
+from ..config import (WORKER_BIND, WORKER_BLOCK_SECONDS, WORKER_MAX_FAILS,
+                      WORKER_PORT, WORKER_SKEW)
 
 VERSION = "1.1.1"
 ID_RE = re.compile(r"^[0-9a-f]{16}$")
@@ -46,45 +51,82 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _authenticated(self) -> bool:
-        header = self.headers.get("Authorization", "")
-        presented = header[7:].strip() if header.lower().startswith("bearer ") else ""
-        return hosts.key_matches(presented, hosts.local_key())
-
-    def _body(self):
+    def _read_body(self):
+        """-> les octets du corps, ou None si l'annonce est absurde. Toujours lu,
+        meme quand la requete sera refusee : laisser des octets dans le tampon
+        desynchronise la connexion suivante."""
         try:
             length = int(self.headers.get("Content-Length") or 0)
         except ValueError:
             return None
-        if length <= 0 or length > MAX_BODY:
+        if length < 0 or length > MAX_BODY:
             return None
-        try:
-            return json.loads(self.rfile.read(length).decode("utf-8"))
-        except (OSError, ValueError, UnicodeDecodeError):
-            return None
+        return self.rfile.read(length) if length else b""
+
+    def _authorize(self, body: bytes):
+        """-> (ok, code, message public). Le motif exact du refus reste dans le
+        journal local : le dire au dehors apprendrait a un attaquant ou il en est."""
+        source = self.client_address[0]
+        left = self.server.limiter.blocked_for(source)
+        if left:
+            return False, 429, f"trop d'échecs, réessayer dans {left}s"
+        ok, reason = sign.verify(hosts.local_key(), self.command, self.path,
+                                 self.headers.get, body, self.server.guard, WORKER_SKEW)
+        if ok:
+            self.server.limiter.record_success(source)
+            return True, 200, ""
+        self.server.emit(f"{source}: refusé — {reason}")
+        if self.server.limiter.record_failure(source):
+            self.server.emit(f"{source}: bloqué {WORKER_BLOCK_SECONDS}s "
+                             f"après {WORKER_MAX_FAILS} échecs")
+        return False, 401, "authentification refusée"
 
     # ---- routes ----
     def do_GET(self):
+        body = self._read_body()
+        if body is None:
+            return self._send(400, {"error": "corps invalide"})
         if self.path == "/v1/health":
-            # Sans cle : uniquement de quoi dire « quelque chose ecoute ici ».
-            # Avec la cle : de quoi verifier qu'on parle bien a la bonne instance.
-            if self._authenticated():
+            # Sans signature : uniquement de quoi dire « quelque chose ecoute ».
+            # Signee : de quoi verifier qu'on parle a la bonne instance, avec la
+            # bonne cle. Un health anonyme ne compte pas comme un echec, sinon un
+            # simple check de disponibilite finirait par bloquer sa propre source.
+            ok, _, _ = self._authorize_quiet(body)
+            if ok:
                 return self._send(200, {"ok": True, "version": VERSION,
                                         "actions": sorted(REMOTE_ACTIONS)})
             return self._send(200, {"ok": True})
-        if not self._authenticated():
-            return self._send(401, {"error": "clé absente ou invalide"})
+        ok, code, message = self._authorize(body)
+        if not ok:
+            return self._send(code, {"error": message})
         m = JOB_RE.match(self.path)
         if m:
             return self._send(200, spool.job_result(m.group(1), ID_RE))
         self._send(404, {"error": "route inconnue"})
 
+    def _authorize_quiet(self, body):
+        """Comme `_authorize`, mais un echec ne compte pas. Reserve a /v1/health,
+        qu'on interroge justement quand on ne sait pas encore si la cle est bonne."""
+        source = self.client_address[0]
+        if self.server.limiter.blocked_for(source):
+            return False, 429, ""
+        ok, _ = sign.verify(hosts.local_key(), self.command, self.path,
+                            self.headers.get, body, self.server.guard, WORKER_SKEW)
+        return ok, 200 if ok else 401, ""
+
     def do_POST(self):
-        if not self._authenticated():
-            return self._send(401, {"error": "clé absente ou invalide"})
+        body = self._read_body()
+        if body is None:
+            return self._send(413, {"error": "corps absent ou trop gros"})
+        ok, code, message = self._authorize(body)
+        if not ok:
+            return self._send(code, {"error": message})
         if self.path != "/v1/jobs":
             return self._send(404, {"error": "route inconnue"})
-        job = self._body()
+        try:
+            job = json.loads(body.decode("utf-8"))
+        except (ValueError, UnicodeDecodeError):
+            return self._send(400, {"error": "corps JSON attendu"})
         if not isinstance(job, dict):
             return self._send(400, {"error": "corps JSON attendu"})
         action = str(job.get("action") or "").strip()
@@ -101,6 +143,8 @@ class Server(ThreadingHTTPServer):
 
     def __init__(self, addr, emit):
         self.emit = emit
+        self.guard = sign.ReplayGuard(WORKER_SKEW)
+        self.limiter = sign.RateLimiter(WORKER_MAX_FAILS, WORKER_BLOCK_SECONDS)
         super().__init__(addr, Handler)
 
 
@@ -115,5 +159,6 @@ def start(emit=print):
         return None
     server = Server((WORKER_BIND, WORKER_PORT), emit)
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    emit(f"bvsecrets-worker: écoute sur {WORKER_BIND}:{WORKER_PORT}")
+    emit(f"bvsecrets-worker: écoute sur {WORKER_BIND}:{WORKER_PORT} "
+         f"(requêtes signées, fenêtre {WORKER_SKEW}s)")
     return server

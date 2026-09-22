@@ -13,9 +13,9 @@ Les hotes se declarent dans la section `[hosts]` de `bv-secrets.ini` :
 
 La cle partagee ne vit PAS la : elle vient de `BV_HOST_KEY_<NOM>` ou du magasin
 `<store>/hosts/<nom>.key` en 0600, pour qu'un fichier de config versionnable ne
-porte jamais de secret.
+porte jamais de secret. Elle ne circule pas non plus sur le reseau : elle SIGNE
+les requetes (voir `bvsecrets.sign`).
 """
-import hmac
 import os
 import re
 from pathlib import Path
@@ -80,11 +80,3 @@ def local_key():
     if from_env:
         return from_env.strip()
     return key(SELF)
-
-
-def key_matches(presented, expected) -> bool:
-    """Comparaison a temps constant, et refus net quand rien n'est configure :
-    sans cle, l'ecouteur ne doit accepter personne plutot que tout le monde."""
-    if not expected or not presented:
-        return False
-    return hmac.compare_digest(str(presented), str(expected))
