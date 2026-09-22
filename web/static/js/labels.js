@@ -54,6 +54,7 @@ export const VIEW_TITLES = {
   fichiers: ["Fichiers", "Où vivent les valeurs adoptées, et comment en adopter d'autres."],
   comptes: ["Comptes", ""],
   acces: ["Accès & rôles", ""],
+  hotes: ["Hôtes", "Les autres instances bv-secrets. Chacune garde ses propres déclarations : seule la valeur traverse."],
   audit: ["Audit", "Qui a atteint quoi, quand, d'où, et ce qui a changé."],
   docs: ["Docs", ""],
 };
@@ -66,4 +67,14 @@ export const MODE_LABEL = { entier: "fichier entier", cle: "clé par clé" };
 export const MODE_HELP = {
   entier: "bv-secrets fabrique tout le fichier",
   cle: "une seule valeur est réécrite, le reste du fichier ne bouge pas",
+};
+
+/* Etat d'un hote distant. Trois issues distinctes, parce qu'elles ne se reparent
+   pas de la meme facon : machine ou service down, cles differentes des deux
+   cotes, ou tout va bien. */
+export const HOST_STATE = {
+  ok: { label: "joignable", color: "#3fbf5f" },
+  badkey: { label: "clé refusée", color: "#d9a13b" },
+  unreachable: { label: "injoignable", color: "#e06060" },
+  unknown: { label: "non déclaré", color: "#888" },
 };

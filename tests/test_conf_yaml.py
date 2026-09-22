@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from bvsecrets import conf_yaml, migrate
+from bvsecrets import conf_yaml, conffile, migrate
 from bvsecrets.config import ConfigError
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -150,18 +150,9 @@ sinks =
         cp = configparser.ConfigParser(interpolation=None)
         cp.optionxform = str
         cp.read_string(self.INI)
-        out = {}
-        for n in cp.sections():
-            s = cp[n]
-            out[n] = {
-                "kind": s.get("kind", "manual").strip(),
-                "length": int((s.get("length", "") or "0").strip() or 0),
-                "group": s.get("group", "manual").strip(),
-                "sinks": [x.strip() for x in s.get("sinks", "").splitlines() if x.strip()],
-                "norestart": [], "compute": "", "probe": "", "validate": "",
-                "note": s.get("note", "").strip(),
-            }
-        return out
+        # Le lecteur reel, pas une copie : c'est une copie ici qui a laisse la
+        # conversion et le test diverger quand un champ est apparu.
+        return {n: conffile.entry_from_ini(cp[n]) for n in cp.sections()}
 
     def test_conversion_round_trips(self):
         cfg = self._ini_cfg()

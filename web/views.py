@@ -1,10 +1,10 @@
 """Build the served pages: login and dashboard."""
 import json
 
-from bvsecrets.config import ALL_KINDS, GEN_KINDS, ROLES, SINK_TYPES
+from bvsecrets.config import ALL_KINDS, GEN_KINDS, GROUP_ORDER, ROLES, SINK_TYPES
 from bvsecrets.locations import writable_schemes
 
-from . import access, files, inventory
+from . import access, files, hostsview, inventory
 from .html import esc, page
 
 NAV_ITEMS = [
@@ -14,6 +14,7 @@ NAV_ITEMS = [
     ("fichiers", "Fichiers", "files"),
     ("rotation", "Rotation", "auto"),
     ("acces", "Accès &amp; rôles", "services"),
+    ("hotes", "Hôtes", "hosts"),
     ("audit", "Audit", None),
     ("docs", "Docs", None),
 ]
@@ -41,22 +42,27 @@ def dashboard(csrf: str) -> str:
     auto = inventory.auto_targets()
     services = access.matrix()["services"]
     filedata = files.data()
+    # Les hotes declares, SANS les interroger : un hote eteint bloquerait le
+    # rendu de la page entiere le temps de son timeout TCP.
+    hostdata = hostsview.data()
     # "<" is escaped: the payload can't close the <script> tag carrying it.
     boot = json.dumps({
         "csrf": csrf,
         "secrets": rows,
         "auto": auto,
         "kinds": {"all": sorted(ALL_KINDS - {"manual"}), "gen": sorted(GEN_KINDS)},
-        "groups": ["auto", "app", "careful", "manual"],
+        "groups": list(GROUP_ORDER),
         "roles": ROLES,
         "files": filedata["files"],
         "adoptRoots": filedata["roots"],
+        "hosts": hostdata["hosts"],
+        "hostOrphans": hostdata["orphans"],
         # The add form offers exactly the sink types the worker accepts, so the UI
         # can't propose one that is then refused.
         "sinkTypes": sorted(set(SINK_TYPES) | writable_schemes()),
     }).replace("<", "\\u003c")
     counts = {"secrets": len(rows), "auto": len(auto), "services": len(services),
-              "files": len(filedata["files"])}
+              "files": len(filedata["files"]), "hosts": len(hostdata["hosts"])}
     head = ("<tr><th>service</th>"
             + "".join(f"<th>{esc(r)}</th>" for r in ROLES)
             + "<th>surfaces</th></tr>")

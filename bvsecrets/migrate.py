@@ -116,17 +116,7 @@ def convert(ini_cfg, header="") -> str:
     doc = conf_yaml.parse(text)
     anchors = doc["anchors"]
     for name, block in doc["secrets"].items():
-        b = conf_yaml._merge(block, anchors, name)
-        entry = {f: str(b.get(f, "")).strip() for f in conf_yaml.TEXT_FIELDS}
-        entry["kind"] = entry["kind"] or "manual"
-        entry["group"] = entry["group"] or "manual"
-        for f in conf_yaml.LIST_FIELDS:
-            v = b.get(f, [])
-            entry[f] = [str(x).strip() for x in v] if isinstance(v, list) else []
-        for f in conf_yaml.INT_FIELDS:
-            raw = str(b.get(f, "") or "").strip()
-            entry[f] = int(raw) if raw else 0
-        reread[name] = entry
+        reread[name] = conf_yaml.entry_from(conf_yaml._merge(block, anchors, name))
     diffs = equivalent(ini_cfg, reread)
     if diffs:
         raise ConfigError("conversion non fidele, rien n'a ete ecrit :\n  "

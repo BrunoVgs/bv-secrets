@@ -14,6 +14,7 @@ from .. import audit
 from ..config import SPOOL
 from ..engine import ConfigError, Engine, RotateAborted
 from .jobs import HANDLERS
+from . import listen
 
 REQ, RES, DONE = SPOOL / "requests", SPOOL / "results", SPOOL / "done"
 POLL_SECONDS = 2.0
@@ -120,6 +121,10 @@ def main():
     for d in (REQ, RES, DONE):
         d.mkdir(parents=True, exist_ok=True)
     sys.stderr.write(f"bvsecrets-worker: watching {REQ}\n")
+    # Seconde source de jobs, si cette machine est declaree joignable. Elle
+    # depose dans le meme REQ : la boucle ci-dessous ne fait aucune difference
+    # entre un job du dashboard local et un job d'une autre instance.
+    listen.start(lambda m: sys.stderr.write(m + "\n"))
     rebuild_digest()
     next_digest = time.time() + DIGEST_SECONDS
     while True:

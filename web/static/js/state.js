@@ -17,6 +17,9 @@ export const S = {
   users: null,       // null tant que la vue Comptes n'a pas chargé
   audit: null,       // null tant que la vue Audit n'a pas chargé
   files: BOOT.files, // fichiers adoptés, déduits des sinks de secrets.conf
+  hosts: BOOT.hosts,             // instances distantes déclarées dans [hosts]
+  hostOrphans: BOOT.hostOrphans, // `host:` pointant vers un hôte non déclaré
+  hostState: {},                 // nom -> {state, detail} : rempli par « Tester » seulement
   adoptPlan: null,   // aperçu d'adoption en cours : {file, proposals, ignored, conflicts}
   adding: null,      // formulaire d'ajout ouvert : brouillon du secret à créer
   addingUser: null,  // formulaire ouvert : brouillon du compte de portail à créer

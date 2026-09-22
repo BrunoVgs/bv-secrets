@@ -33,7 +33,7 @@ forme d'origine survivent a un `adopt` ou a une edition depuis le dashboard.
 import os
 import re
 
-from .config import CONF, ConfigError
+from .config import CONF, ConfigError, normalize_group
 
 # Un `#` ne commence un commentaire que precede d'un espace ou en debut de ligne.
 # Sans cette regle, `env:pihole#FTLCONF_webserver_api_password` perdrait sa moitie
@@ -43,7 +43,7 @@ _ANCHOR = re.compile(r"^&([A-Za-z0-9_-]+)\s*(.*)$")
 
 # Champs d'un secret, et comment les rendre dans la sortie de _load_conf().
 LIST_FIELDS = ("sinks", "norestart")
-TEXT_FIELDS = ("kind", "group", "compute", "probe", "validate", "note")
+TEXT_FIELDS = ("kind", "group", "host", "compute", "probe", "validate", "note")
 INT_FIELDS = ("length",)
 
 # Cles de premier niveau qui decrivent la machine plutot que des secrets.
@@ -270,6 +270,25 @@ def _merge(block: dict, anchors: dict, name: str) -> dict:
     return merged
 
 
+def entry_from(block: dict) -> dict:
+    """Un bloc fusionne -> la forme commune {kind, group, host, sinks, ...}.
+
+    Seul constructeur : `load` et la conversion depuis l'INI passent par ici.
+    La conversion en avait une copie, et les deux ont diverge des qu'un champ
+    est apparu -- c'est exactement ce que ce point d'entree unique empeche."""
+    entry = {f: str(block.get(f, "")).strip() for f in TEXT_FIELDS}
+    entry["kind"] = entry["kind"] or "manual"
+    entry["group"] = normalize_group(entry["group"], entry["kind"])
+    for f in LIST_FIELDS:
+        v = block.get(f, [])
+        entry[f] = [str(x).strip() for x in v if str(x).strip()] if isinstance(v, list) \
+            else [str(v).strip()] if str(v).strip() else []
+    for f in INT_FIELDS:
+        raw = str(block.get(f, "") or "").strip()
+        entry[f] = int(raw) if raw else 0
+    return entry
+
+
 def load(path=None) -> dict:
     """-> la meme forme que le lecteur INI : {NOM: {kind, length, group, sinks, ...}}"""
     path = CONF if path is None else path
@@ -291,17 +310,7 @@ def load(path=None) -> dict:
     out = {}
     for name, block in secrets.items():
         b = _merge(block, anchors, name)
-        entry = {f: str(b.get(f, "")).strip() for f in TEXT_FIELDS}
-        entry["kind"] = entry["kind"] or "manual"
-        entry["group"] = entry["group"] or "manual"
-        for f in LIST_FIELDS:
-            v = b.get(f, [])
-            entry[f] = [str(x).strip() for x in v if str(x).strip()] if isinstance(v, list) \
-                else [str(v).strip()] if str(v).strip() else []
-        for f in INT_FIELDS:
-            raw = str(b.get(f, "") or "").strip()
-            entry[f] = int(raw) if raw else 0
-        out[name] = entry
+        out[name] = entry_from(b)
     return out
 
 
@@ -318,7 +327,8 @@ def render_section(name, kind, group, sinks, length=0, note="", validate="",
         out.append(f"{f}<<: *{template}")
     else:
         out.append(f"{f}kind: {kind}")
-        out.append(f"{f}group: {group}")
+        if group != normalize_group("", kind):
+            out.append(f"{f}group: {group}")
     if length:
         out.append(f"{f}length: {length}")
     if sinks:

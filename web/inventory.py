@@ -17,6 +17,9 @@ def _row(engine, name, meta):
         "name": name,
         "kind": c["kind"],
         "group": c["group"],
+        # Instance qui heberge ce secret. Vide = ici. Un secret distant n'a pas
+        # de sink local : ses cibles sont declarees par l'autre machine.
+        "host": c.get("host", ""),
         "present": bool(value),
         "len": len(value),
         "services": sorted({s[4:].split("#", 1)[0] for s in c["sinks"] if s.startswith("env:")}),

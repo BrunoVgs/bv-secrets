@@ -136,3 +136,67 @@ class TestImport(CLITestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestApplyPushesFixedKinds(CLITestCase):
+    """`apply` nu doit pousser TOUT ce qui a une valeur, pas seulement ce qu'un
+    `rotate` nu regenererait. Les deux partageaient `select()`, donc un `apikey`
+    -- jamais dans GEN_KINDS -- n'etait ni rendu ni recree : le conteneur gardait
+    son ancienne valeur indefiniment, sans le moindre message."""
+
+    def setUp(self):
+        super().setUp()
+        self.conf.write_text(
+            f"[THIRD_PARTY_KEY]\nkind = apikey\n"
+            f"sinks =\n    envfile:{self.app_env}#THIRD_PARTY_KEY\n")
+        self.app_env.write_text("THIRD_PARTY_KEY=stale\n")
+        (self.store / "bv-secrets.env").write_text("THIRD_PARTY_KEY=current\n")
+
+    def test_bare_apply_reaches_a_third_party_key(self):
+        r = self.run_cli("apply", "--yes")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        from bvsecrets.envfile import parse_env
+        self.assertEqual(parse_env(self.app_env).get("THIRD_PARTY_KEY"), "current")
+
+    def test_a_key_without_value_is_left_alone(self):
+        (self.store / "bv-secrets.env").write_text("")
+        r = self.run_cli("apply", "--yes")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        from bvsecrets.envfile import parse_env
+        self.assertEqual(parse_env(self.app_env).get("THIRD_PARTY_KEY"), "stale")
+
+
+class TestApplyIsIdempotent(CLITestCase):
+    """Un `apply` qui ne change rien ne doit RIEN toucher. render() reecrivait
+    chaque rendered/<svc>.env sans condition et services_to_recreate() derivait
+    des sinks seuls : sur cette stack, un apply nu recreait 17 conteneurs pour
+    des valeurs parfois inchangees depuis des mois."""
+
+    def setUp(self):
+        super().setUp()
+        self.conf.write_text(
+            "[APP_SECRET]\nkind = password\nlength = 16\n"
+            "sinks =\n    env:demo#APP_SECRET\n")
+        (self.store / "bv-secrets.env").write_text("APP_SECRET=value\n")
+        self.rendered = self.store / "rendered" / "demo.env"
+
+    def test_first_apply_renders(self):
+        r = self.run_cli("apply")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("1 modifié", r.stdout)
+        self.assertTrue(self.rendered.exists())
+
+    def test_second_apply_rewrites_nothing(self):
+        self.run_cli("apply")
+        stamp = self.rendered.stat().st_mtime_ns
+        r = self.run_cli("apply")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("aucun changement", r.stdout)
+        self.assertEqual(self.rendered.stat().st_mtime_ns, stamp)
+
+    def test_a_new_value_renders_again(self):
+        self.run_cli("apply")
+        (self.store / "bv-secrets.env").write_text("APP_SECRET=other\n")
+        r = self.run_cli("apply")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("1 modifié", r.stdout)

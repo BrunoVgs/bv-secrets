@@ -8,10 +8,11 @@ import re
 
 from bvsecrets import Engine, looks_like_apikey
 from bvsecrets.config import (ALL_KINDS, GEN_KINDS, GROUPS, MIN_ACCOUNT_PASSWORD,
+                             normalize_group,
                               ROLES, SINK_TYPES)
 from bvsecrets.locations import writable_schemes
 
-from . import access, audit_read, files, inventory, session, spool
+from . import access, audit_read, files, hostsview, inventory, session, spool
 
 JOB_ID_RE = re.compile(r"^[0-9a-f]{8,32}$")
 NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
@@ -43,6 +44,10 @@ def api_files(req):
     return 200, files.data()
 
 
+def api_hosts(req):
+    return 200, hostsview.data()
+
+
 # ---- POST ----
 def api_rotate(req):
     only = req.body.get("only") or []
@@ -55,6 +60,26 @@ def api_rotate(req):
         return _err(400, "aucune cible éligible", rejected=rejected)
     jid = spool.queue(action="rotate", only=accepted)
     return 202, {"id": jid, "accepted": accepted, "rejected": rejected}
+
+
+def api_hosts_test(req):
+    """Interroge un hote. Synchrone : c'est un aller-retour borne par le timeout
+    du client HTTP, pas un job, donc rien a deposer dans le spool."""
+    name = str(req.body.get("name") or "").strip()
+    if not name:
+        return _err(400, "nom d'hôte attendu")
+    return 200, hostsview.probe(name)
+
+
+def api_hosts_push(req):
+    """Pousse vers un hote. Le dashboard n'agit pas : il depose un `apply` cible
+    sur les secrets de cet hote, et le worker privilegie s'en charge."""
+    name = str(req.body.get("name") or "").strip()
+    targets = [n for n, c in Engine().cfg.items() if c.get("host") == name]
+    if not targets:
+        return _err(400, f"aucun secret hébergé sur '{name}'")
+    return 202, {"id": spool.queue(action="apply", only=sorted(targets), yes=True),
+                 "targets": sorted(targets)}
 
 
 def api_doctor(req):
@@ -121,6 +146,7 @@ def api_meta_apply(req):
             return _err(400, f"format invalide: {kind}")
         if looks_like_apikey(name) and kind in GEN_KINDS:
             return _err(400, f"{name} est une clé API : elle ne peut pas être générée")
+        group = normalize_group(group) if group is not None else None
         if group is not None and group not in GROUPS:
             return _err(400, f"rotation invalide: {group}")
     return 202, {"id": spool.queue(action="meta", changes=changes)}
@@ -146,6 +172,7 @@ def api_secret_add(req):
         return _err(400, f"{name} existe déjà")
     if kind not in ALL_KINDS:
         return _err(400, f"format invalide: {kind}")
+    group = normalize_group(group, kind)
     if group not in GROUPS:
         return _err(400, f"rotation invalide: {group}")
     if looks_like_apikey(name) and kind in GEN_KINDS:
@@ -199,10 +226,12 @@ def api_reveal(req):
 
 
 GET_ROUTES = {"/api/list": api_list, "/api/plan": api_plan, "/api/audit": api_audit,
-              "/api/files": api_files}
+              "/api/files": api_files, "/api/hosts": api_hosts}
 POST_ROUTES = {
     "/api/rotate": api_rotate,
     "/api/doctor": api_doctor,
+    "/api/hosts/test": api_hosts_test,
+    "/api/hosts/push": api_hosts_push,
     "/api/access/apply": api_access_apply,
     "/api/users": api_users,
     "/api/user": api_user,

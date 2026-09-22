@@ -16,8 +16,9 @@ from pathlib import Path
 
 from . import locations, validate
 from .config import (ALL_KINDS, COMPOSE_DIR, CONF, ConfigError, DEFAULT_LEN, GEN_KINDS,
-                     KEYFILE, LOCAL, MASTER, META, MIRROR, REF, RENDER_DIR, is_yaml)
-from . import conf_yaml
+                     HOSTS, KEYFILE, LOCAL, MASTER, META, MIRROR, REF, RENDER_DIR,
+                     is_yaml, normalize_group)
+from . import conf_yaml, conffile, remote
 from .envfile import parse_env, write_env
 
 
@@ -45,6 +46,10 @@ class Engine:
     def __init__(self):
         self.cfg = self._load_conf()
         self.data = self._combined()
+        # Services dont le rendu a REELLEMENT change au dernier render().
+        # None = render() n'a pas tourne, donc aucune information : on ne filtre
+        # pas, plutot que de conclure a tort que rien n'a bouge.
+        self.changed_services = None
 
     # ---- config + values ----
     @staticmethod
@@ -69,17 +74,7 @@ class Engine:
         for name in cp.sections():
             s = cp[name]
             Engine._reject_linux_sink(name, s.get("sinks", "").splitlines())
-            out[name] = {
-                "kind": s.get("kind", "manual").strip(),
-                "length": int((s.get("length", "") or "0").strip() or 0),
-                "group": s.get("group", "manual").strip(),
-                "sinks": [x.strip() for x in s.get("sinks", "").splitlines() if x.strip()],
-                "norestart": [x.strip() for x in s.get("norestart", "").splitlines() if x.strip()],
-                "compute": s.get("compute", "").strip(),
-                "probe": s.get("probe", "").strip(),
-                "validate": s.get("validate", "").strip(),
-                "note": s.get("note", "").strip(),
-            }
+            out[name] = conffile.entry_from_ini(s)
         return out
 
     @staticmethod
@@ -156,11 +151,26 @@ class Engine:
         services = self.service_map(data)
         RENDER_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
         os.chmod(RENDER_DIR, 0o700)
+        if self.changed_services is None:
+            self.changed_services = set()
         for svc, kv in services.items():
-            write_env(RENDER_DIR / f"{svc}.env", kv,
+            path = RENDER_DIR / f"{svc}.env"
+            # Un rendu identique n'est pas reecrit : sans ca, `apply` recreait
+            # tous les services a chaque passage, y compris pour une valeur
+            # inchangee depuis des mois.
+            if path.exists() and parse_env(path) == kv:
+                continue
+            write_env(path, kv,
                       header=f"RENDERED for '{svc}' by bv-secrets — do not edit; "
                              f"change secrets.conf / bv-secrets.env then re-render.")
+            self.changed_services.add(svc)
         return services
+
+    def _render_report(self) -> str:
+        n = len(self.changed_services or ())
+        if not n:
+            return "rendered/*.env : aucun changement."
+        return f"rendered/*.env : {n} modifié(s) — {', '.join(sorted(self.changed_services))}"
 
     # ---- appliers ----
     def _run(self, argv, inp=None, cwd=None):
@@ -229,7 +239,7 @@ class Engine:
         return [cn for cn, c in self.cfg.items()
                 if c["kind"] == "computed" and any(r in names for r in REF.findall(c["compute"]))]
 
-    def services_to_recreate(self, names) -> list:
+    def services_to_recreate(self, names, changed=None) -> list:
         """Services whose container must be recreated after apply.
 
         DERIVED from sinks, never declared by hand: see `sink_service` for which
@@ -243,12 +253,19 @@ class Engine:
             skip |= set(c.get("norestart", []))
             for sink in c.get("sinks", []):
                 svc = sink_service(sink)
-                if svc and svc not in svcs:
-                    svcs.append(svc)
+                if not svc or svc in svcs:
+                    continue
+                # Un service ne repart que si quelque chose a REELLEMENT
+                # bouge chez lui : rendu different, ou sink non-env reecrit.
+                # `changed` a None = render()/apply() n'ont pas tourne, donc
+                # aucune information : on ne filtre pas.
+                if changed is not None and svc not in changed:
+                    continue
+                svcs.append(svc)
         return [s for s in svcs if s not in skip]
 
     def recreate(self, names, dry: bool, log):
-        for svc in self.services_to_recreate(names):
+        for svc in self.services_to_recreate(names, self.changed_services):
             if dry:
                 log(f"    would recreate {svc}")
                 continue
@@ -336,6 +353,17 @@ class Engine:
         return [n for n, c in self.cfg.items()
                 if c["kind"] in GEN_KINDS and c["group"] == "auto"]
 
+    def select_apply(self, only) -> list:
+        """Ce qu'`apply` doit pousser : tout secret qui a une valeur.
+
+        `select` repond a une autre question — ce qu'un `rotate` nu regenere —
+        et la reutiliser ici sautait en silence tout `kind` fixe : un `apikey`
+        n'est jamais dans GEN_KINDS, donc jamais rendu ni recree, et le
+        conteneur gardait son ancien env indefiniment."""
+        if only:
+            return self.select(only)
+        return [n for n in self.cfg if self.value_of(n)]
+
     def plan(self, names, log):
         for n in names:
             c = self.cfg[n]
@@ -350,6 +378,7 @@ class Engine:
 
     # ---- rotate / apply ----
     def rotate(self, names, do_it: bool, log):
+        self.changed_services = set()
         targets = [n for n in names if self.cfg[n]["kind"] in GEN_KINDS]
         for n in (n for n in names if n not in targets):
             kind = self.cfg[n]["kind"]
@@ -375,11 +404,25 @@ class Engine:
         write_env(MASTER, m)
         self.touch_meta(targets)
         self.data = self._combined()
+        self._push_remote(targets, log)
         self.render()
-        log("rendered/*.env mis à jour.")
+        log(self._render_report())
         self.recreate(targets, False, log)
         self.seal(quiet=True)
         log(f"\n✓ rotate terminé : {', '.join(targets)}. (valeurs via `bv-secrets get <NAME>`)")
+
+    def _push_remote(self, names, log):
+        """Envoie leur valeur courante aux instances qui les hebergent.
+
+        Toujours APRES l'ecriture du store : si la poussee echoue, la valeur
+        reste ici et un `apply` la repoussera, au lieu d'etre perdue entre deux
+        machines."""
+        for n in names:
+            host = self.cfg[n].get("host", "")
+            if not host:
+                continue
+            remote.run(host, log=log, action="set_value",
+                       name=n, value=self.value_of(n))
 
     def _apply_live_sinks(self, targets, old, new, log):
         """Apply non-env sinks with rollback. root last, so earlier ALTERs can still
@@ -396,6 +439,9 @@ class Engine:
                     if not self._apply_sink(sink, new[n], eff, False, log):
                         raise RuntimeError(f"apply FAILED: {n} -> {sink}")
                     applied.append((n, sink, old[n]))
+                    svc = sink_service(sink)
+                    if svc:
+                        self.changed_services.add(svc)
                     if not self._verify_sink(sink, new[n], eff):
                         raise RuntimeError(f"verify FAILED: {n} -> {sink}")
                 eff[n] = new[n]
@@ -408,18 +454,34 @@ class Engine:
 
     def apply(self, names, do_it: bool, log):
         """Push CURRENT values to sinks without regenerating."""
+        self.changed_services = set()
         self.render()
-        log("rendered/*.env réécrits.")
+        log(self._render_report())
         if not do_it:
             log("(env appliqué. Ajouter --yes pour pousser aussi linux/mysql/cmd + restarts.)")
             return
         eff = dict(self.data)
+        # Les secrets heberges ailleurs : l'autre instance a ses propres
+        # declarations et son propre worker privilegie. On lui envoie la valeur,
+        # elle applique ses cibles a elle.
+        self._push_remote(names, log)
         for n in names:
+            if self.cfg[n].get("host", ""):
+                continue
             for sink in self.cfg[n]["sinks"]:
                 if sink.startswith("env:"):
                     continue
+                value = self.value_of(n)
+                # Deja en place : ne pas reecrire. C'est l'ecriture, pas la
+                # selection, qui justifie de recreer le service derriere.
+                # Un sink non lisible (mysql, cmd) rend None et sera pousse.
+                if self.read_at(sink) == value:
+                    continue
                 log(f"apply {n} -> {sink}")
-                self._apply_sink(sink, self.value_of(n), eff, False, log)
+                self._apply_sink(sink, value, eff, False, log)
+                svc = sink_service(sink)
+                if svc:
+                    self.changed_services.add(svc)
         self.recreate(names, False, log)
         log("✓ apply terminé.")
 
@@ -558,6 +620,18 @@ class Engine:
                     problems.append(f"INVALID {n}: {err}")
             problems += [f"BAD sink on {n}: {s}" for s in c["sinks"]
                          if s.split(":", 1)[0] not in valid_sinks]
+            host = c.get("host", "")
+            if host:
+                # Un secret distant n'a pas de cible ICI : ses sinks sont declares
+                # dans le secrets.conf de l'autre machine, par elle. En accepter
+                # localement laisserait croire que `apply` les ecrit, alors qu'il
+                # ne fait que pousser la valeur.
+                if host not in HOSTS:
+                    problems.append(f"HOST inconnu sur {n}: {host} "
+                                    f"(section [hosts] de bv-secrets.ini)")
+                if c["sinks"]:
+                    problems.append(f"HOST+SINKS sur {n}: un secret hébergé sur "
+                                    f"'{host}' ne déclare pas de sink ici")
         for p in [MASTER, LOCAL] + list(RENDER_DIR.glob("*.env")):
             if p.exists() and oct(p.stat().st_mode & 0o777) != "0o600":
                 problems.append(f"PERM {p} is {oct(p.stat().st_mode & 0o777)}, want 0o600")

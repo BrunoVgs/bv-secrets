@@ -7,7 +7,10 @@ import subprocess
 import sys
 from pathlib import Path
 
-from . import adopt, audit, conf_yaml, conffile, elevation, host, service, ui, validate
+import secrets as pysecrets
+
+from . import (adopt, audit, conf_yaml, conffile, elevation, host, hosts,
+               remote, service, ui, validate)
 from .config import (CONF, COMPOSE_DIR, CONFIG_FILE, GEN_KINDS, KEYFILE,
                      LOCAL, MASTER, MIRROR, PROJECT_DIR, RENDER_DIR, SECRETS_DIR,
                      OBJ_ORDER, is_yaml, looks_like_apikey, secret_object,
@@ -107,7 +110,56 @@ def cmd_rotate(a, e):
 
 
 def cmd_apply(a, e):
-    e.apply(e.select(a.only), a.yes, _log)
+    e.apply(e.select_apply(a.only), a.yes, _log)
+
+
+def cmd_hosts(a, e):
+    """Les instances joignables, et ce qui manque pour les joindre."""
+    if a.key:
+        value = a.key if a.key != "-" else pysecrets.token_urlsafe(32)
+        path = hosts.write_key(a.name, value)
+        print(f"clé de {a.name} écrite dans {path} (0600)")
+        print("La même valeur doit être posée sur l'hôte distant, dans "
+              "BV_WORKER_KEY ou <store>/hosts/self.key.")
+        if a.key == "-":
+            print(f"\n{value}\n")
+        return
+    if not hosts.names():
+        print("Aucun hôte déclaré. Section [hosts] de bv-secrets.ini :\n"
+              "\n    [hosts]\n    xeon = http://10.8.0.4:8765\n")
+        return
+    hosted = {}
+    for n, c in e.cfg.items():
+        if c.get("host"):
+            hosted.setdefault(c["host"], []).append(n)
+    print(f"{'HÔTE':12} {'URL':34} {'CLÉ':5} {'SECRETS':8} ÉTAT")
+    for name in hosts.names():
+        key = "oui" if hosts.key(name) else "NON"
+        state = "(non testé, --test pour interroger)"
+        if a.test:
+            try:
+                info = remote.health(name)
+                # Une reponse sans `version` = l'hote repond mais n'a pas
+                # reconnu la cle : le distinguer d'un hote muet fait gagner
+                # le mauvais quart d'heure evident.
+                state = f"joignable, v{info['version']}" if info.get("version") \
+                    else "joignable, CLÉ REFUSÉE"
+            except Exception as exc:
+                state = str(exc).split(":", 1)[-1].strip()
+        print(f"{name:12} {hosts.url(name):34} {key:5} "
+              f"{len(hosted.get(name, [])):<8} {state}")
+
+
+def cmd_push(a, e):
+    """Envoie la valeur courante d'un secret à l'instance qui l'héberge."""
+    names = e.select_apply(a.only) if a.only else \
+        [n for n, c in e.cfg.items() if c.get("host")]
+    remote_names = [n for n in names if e.cfg[n].get("host")]
+    if not remote_names:
+        raise ConfigError("aucun secret hébergé à distance dans la sélection "
+                          "(champ `host:` dans secrets.conf)")
+    e._push_remote(remote_names, _log)
+    print(f"✓ {len(remote_names)} secret(s) poussé(s).")
 
 
 def cmd_get(a, e):
@@ -279,7 +331,8 @@ HEADER_YAML = """\
 #
 # Deux axes independants :
 #   kind   ce que la valeur EST      password|hex|b64|userpass|passphrase|apikey|opaque|computed
-#   group  QUAND on la regenere      auto (rotate nu) | autre (seulement si ciblee) | manual (jamais)
+#   group  QUAND on la regenere      auto (rotate nu) | app (seulement si ciblee) | manual (jamais)
+#          Optionnel : deduit du kind s'il est absent -- auto si generable, manual sinon.
 #
 # Un sink dit ou pousser la valeur :  schema:cible#selecteur
 #   env:pihole#FTLCONF_...      variable du .env d'un service compose
@@ -485,6 +538,7 @@ _FAMILIES = [
     ("valeurs", ["get", "set", "gen", "add", "run"]),
     ("adoption", ["scan", "import", "adopt"]),
     ("store chiffré", ["seal", "open"]),
+    ("instances distantes", ["hosts", "push"]),
 ]
 
 _EXAMPLES = [
@@ -492,6 +546,8 @@ _EXAMPLES = [
     ("bv-secrets rotate --only APP_SECRET --yes", "régénère un secret et le propage"),
     ("bv-secrets adopt /srv/app/.env --prefix APP_", "onboarde les secrets d'une app"),
     ("bv-secrets audit --since 24h --denied", "accès refusés des dernières 24h"),
+    ("bv-secrets hosts --test", "instances distantes : joignables ? clé bonne ?"),
+    ("bv-secrets push --only QB_PASSWORD", "envoie une valeur à l'instance qui l'héberge"),
 ]
 
 
@@ -552,6 +608,13 @@ def build_parser():
     add("plan", "montre ce que rotate ferait (dry-run)", cmd_plan, only)
     add("rotate", "régénère + applique partout (défaut : groupe auto)", cmd_rotate, only, yes)
     add("apply", "pousse les valeurs courantes vers les sinks (sans régénérer)", cmd_apply, only, yes)
+    add("hosts", "instances bv-secrets distantes : URL, clé, état", cmd_hosts,
+        (("name",), {"nargs": "?", "default": ""}),
+        (("--test",), {"action": "store_true", "help": "interroger chaque hôte"}),
+        (("--key",), {"default": "", "help": "poser la clé partagée d'un hôte "
+                                             "(`-` pour en générer une)"}))
+    add("push", "envoie la valeur courante d'un secret à l'instance qui l'héberge",
+        cmd_push, only)
     add("get", "imprime une valeur (scripting)", cmd_get, (("key",), {}))
     add("set", "écrit une valeur", cmd_set,
         (("key",), {}), (("value",), {}), (("--local",), {"action": "store_true"}))

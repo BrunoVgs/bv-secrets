@@ -12,7 +12,7 @@ passent tous par ces trois fonctions, et aucun n'a a savoir dans quoi il ecrit.
 import os
 
 from . import conf_yaml
-from .config import CONF, is_yaml
+from .config import CONF, is_yaml, normalize_group
 
 
 def write_text(text: str) -> None:
@@ -35,7 +35,9 @@ def write_text(text: str) -> None:
 def render_section(name, kind, group, sinks, length=0, note="", validate=""):
     if is_yaml():
         return conf_yaml.render_section(name, kind, group, sinks, length, note, validate)
-    block = [f"[{name}]", f"kind  = {kind}", f"group = {group}"]
+    block = [f"[{name}]", f"kind  = {kind}"]
+    if group != normalize_group("", kind):
+        block.append(f"group = {group}")
     if length:
         block.append(f"length = {length}")
     block.append("sinks =")
@@ -55,3 +57,27 @@ def append_sections(rendered_blocks):
     tail = "\n\n".join(rendered_blocks)
     sep = "" if existing.endswith("\n\n") or not existing else ("\n" if existing.endswith("\n") else "\n\n")
     write_text(existing + sep + tail + "\n")
+
+
+def entry_from_ini(section) -> dict:
+    """Une section configparser -> la forme commune, pendant INI de
+    `conf_yaml.entry_from`. Unique lecteur : l'Engine et la conversion vers YAML
+    l'appellent tous les deux, pour qu'un champ ajoute apparaisse des deux cotes
+    du meme coup."""
+    kind = section.get("kind", "manual").strip()
+
+    def lines(field):
+        return [x.strip() for x in section.get(field, "").splitlines() if x.strip()]
+
+    return {
+        "kind": kind,
+        "length": int((section.get("length", "") or "0").strip() or 0),
+        "group": normalize_group(section.get("group", ""), kind),
+        "host": section.get("host", "").strip(),
+        "sinks": lines("sinks"),
+        "norestart": lines("norestart"),
+        "compute": section.get("compute", "").strip(),
+        "probe": section.get("probe", "").strip(),
+        "validate": section.get("validate", "").strip(),
+        "note": section.get("note", "").strip(),
+    }

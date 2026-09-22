@@ -291,5 +291,41 @@ def do_adopt(job, log):
 
 
 # Actions that don't touch secrets: handled without instantiating Engine.
+def do_set_value(job, log):
+    """Pose la valeur d'un secret DEJA declare ici, puis la propage.
+
+    C'est ce qu'une instance de controle pousse chez cet hote. Elle n'envoie
+    jamais de declaration : seulement une valeur, pour un nom que cette machine
+    connait deja. Les sinks appliques sont ceux d'ICI -- chaque instance garde
+    ses propres cibles, personne ne pilote le disque d'un autre a distance.
+
+    Comme `add`, ce job porte une valeur en clair : la boucle supprime son fichier
+    de spool au lieu de l'archiver, et rien ici ne journalise la valeur."""
+    engine = Engine()
+    name = str(job.get("name", "")).strip()
+    if not NAME_RE.match(name):
+        raise RuntimeError(f"nom invalide: {name!r}")
+    if name not in engine.cfg:
+        raise RuntimeError(f"{name}: non déclaré sur cet hôte")
+    value = job.get("value") or ""
+    if not value:
+        raise RuntimeError(f"{name}: valeur vide")
+    err = validate.check(engine.cfg[name]["validate"], value)
+    if err:
+        raise RuntimeError(f"{name}: {err}")
+
+    data = parse_env(MASTER)
+    if data.get(name) == value:
+        log(f"{name}: valeur déjà en place ({len(value)} c) — rien à faire.")
+        return {"name": name, "len": len(value), "changed": False}
+    data[name] = value
+    write_env(MASTER, data)
+    Engine.touch_meta([name])
+    log(f"{name}: valeur en store ({len(value)} c)")
+    Engine().apply([name], True, log)
+    return {"name": name, "len": len(value), "changed": True}
+
+
 HANDLERS = {"access": do_access, "meta": do_meta, "users": do_users, "user": do_user,
-            "add": do_add, "adopt_plan": do_adopt_plan, "adopt": do_adopt}
+            "add": do_add, "adopt_plan": do_adopt_plan, "adopt": do_adopt,
+            "set_value": do_set_value}

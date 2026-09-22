@@ -14,6 +14,7 @@ import "./views/files.js";
 import "./views/users.js";
 import "./views/access.js";
 import "./views/audit.js";
+import "./views/hosts.js";
 
 $("#rotauto").onclick = () => rotate(S.auto);
 $("#doctor").onclick = doctor;

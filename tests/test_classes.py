@@ -8,7 +8,36 @@ from pathlib import Path
 
 from bvsecrets.config import (OBJ_COMPUTED, OBJ_ORDER, OBJ_PASSWORD, OBJ_TOKEN,
                               ROT_AUTO, ROT_NEVER, ROT_ONDEMAND, ROT_ORDER,
-                              secret_object, secret_rotation)
+                              GROUPS, GROUP_ORDER, normalize_group, secret_object,
+                              secret_rotation)
+
+
+class TestGroupIsDerivedNotDeclared(unittest.TestCase):
+    """Le groupe n'a d'effet que sur un kind generable : sur un kind fixe
+    `secret_rotation` sort ROT_NEVER avant meme de le lire. L'exiger a la
+    declaration faisait ecrire a la main une valeur sans portee, et laissait
+    poser des paires qui ne voulaient rien dire."""
+
+    def test_absent_it_follows_the_kind(self):
+        self.assertEqual(normalize_group("", "password"), "auto")
+        self.assertEqual(normalize_group("", "hex"), "auto")
+        self.assertEqual(normalize_group("", "apikey"), "manual")
+        self.assertEqual(normalize_group("", "opaque"), "manual")
+        self.assertEqual(normalize_group("", "computed"), "manual")
+
+    def test_declared_it_wins(self):
+        self.assertEqual(normalize_group("manual", "password"), "manual")
+        self.assertEqual(normalize_group("auto", "apikey"), "auto")
+
+    def test_careful_is_an_alias_of_app(self):
+        # supprime faute de comportement propre : aucun code ne le distinguait
+        # de `app`, les deux n'etaient que des membres de ROTATE_GROUPS.
+        self.assertNotIn("careful", GROUPS)
+        self.assertEqual(normalize_group("careful", "password"), "app")
+        self.assertEqual(secret_rotation("password", "careful", "A"), ROT_ONDEMAND)
+
+    def test_the_ui_reads_the_order_instead_of_redeclaring_it(self):
+        self.assertEqual(set(GROUP_ORDER), GROUPS)
 
 
 class TestTwoAxesStaySeparate(unittest.TestCase):

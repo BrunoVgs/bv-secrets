@@ -45,9 +45,9 @@ def _project_file(env: str, filename: str) -> Path:
 CONFIG_FILE = _project_file("BV_CONFIG", "bv-secrets.ini")
 
 
-def _load_project_config() -> dict:
-    """The `[bv-secrets]` section of the project INI, as a flat dict. Absent or
-    unreadable file -> empty dict (a bare machine needs no config file)."""
+def _load_section(section: str) -> dict:
+    """One section of the project INI, as a flat dict. Absent or unreadable file
+    -> empty dict (a bare machine needs no config file)."""
     path = CONFIG_FILE
     if not path.exists():
         return {}
@@ -57,10 +57,14 @@ def _load_project_config() -> dict:
         cp.read(path, encoding="utf-8")
     except (OSError, configparser.Error):
         return {}
-    return dict(cp["bv-secrets"]) if cp.has_section("bv-secrets") else {}
+    return dict(cp[section]) if cp.has_section(section) else {}
 
 
-_FILE = _load_project_config()
+_FILE = _load_section("bv-secrets")
+# `[hosts]` : nom -> URL de base du worker distant. Une instance par machine,
+# chacune avec son propre store et ses propres declarations ; celle-ci ne fait
+# que pousser des valeurs chez les autres.
+HOSTS = {k.strip(): v.strip() for k, v in _load_section("hosts").items() if v.strip()}
 
 
 def _setting(env: str, default: str = "") -> str:
@@ -89,6 +93,9 @@ MIRROR = SECRETS_DIR / "store.enc"
 KEYFILE = SECRETS_DIR / ".masterkey"
 META = SECRETS_DIR / "meta.env"          # NAME=last-set date, not secret
 SPOOL = SECRETS_DIR / "spool"
+# Cles partagees des workers distants, une par hote, 0600. Le magasin de cles est
+# separe du store de secrets : il sert a joindre une instance, pas a la peupler.
+HOST_KEYS_DIR = SECRETS_DIR / "hosts"
 
 # Audit: the worker (only privileged component, has docker + wheel) builds the
 # full digest; the web reads it read-only. Single writer, no race.
@@ -205,7 +212,26 @@ GEN_KINDS = {"password", "hex", "b64", "userpass", "passphrase"}
 # app knows it). Regenerate in the app, then `set`.
 FIXED_KINDS = {"apikey", "opaque", "manual", "computed"}
 ALL_KINDS = GEN_KINDS | FIXED_KINDS
-GROUPS = {"auto", "app", "careful", "manual"}
+# Du plus automatique au moins ; l'UI lit cet ordre au lieu de le redeclarer.
+GROUP_ORDER = ("auto", "app", "manual")
+GROUPS = set(GROUP_ORDER)
+# `careful` n'a jamais eu de comportement propre : comme `app`, il n'etait qu'un
+# membre de ROTATE_GROUPS, et aucun code ne les distinguait. Garde en alias pour
+# les configs ecrites avant sa suppression.
+GROUP_ALIASES = {"careful": "app"}
+
+
+def normalize_group(group: str, kind: str = "") -> str:
+    """Le groupe effectif d'un secret.
+
+    Absent, il se deduit du kind : un kind generable entre dans la rotation nue,
+    un kind fixe ne se rote jamais. L'ecrire a la main n'ajoutait rien -- sur les
+    kinds fixes `secret_rotation` ignore le groupe -- et laissait declarer des
+    paires sans effet."""
+    group = (group or "").strip()
+    if not group:
+        return "auto" if kind.strip() in GEN_KINDS else "manual"
+    return GROUP_ALIASES.get(group, group)
 DEFAULT_LEN = {"password": 20, "hex": 32, "b64": 32, "userpass": 24, "passphrase": 24}
 
 # Engine-native sink types. Structured connectors (envfile/regex/json/yaml/ini/toml)
@@ -214,8 +240,15 @@ SINK_TYPES = ("env", "file", "mysql", "cmd")
 # Roles strongest to weakest; the first one is the superuser (passes every gate).
 ROLES = [r.strip() for r in _setting("BV_ROLES", "admin,trusted,guest").split(",") if r.strip()]
 SUPERUSER = ROLES[0]
-ROTATE_GROUPS = {"auto", "app", "careful"}
+ROTATE_GROUPS = {"auto", "app"}
 
+
+# Ecouteur du worker. Vide = desactive : une instance n'accepte de job distant
+# que si on l'a explicitement dit, et on l'attache a wg0, jamais a 0.0.0.0.
+WORKER_BIND = _setting("BV_WORKER_BIND", "")
+WORKER_PORT = int(_setting("BV_WORKER_PORT", "8765") or "8765")
+# Delai d'attente par defaut d'un job pousse chez un hote distant.
+REMOTE_TIMEOUT = int(_setting("BV_REMOTE_TIMEOUT", "120") or "120")
 
 # Deployment-specific service names. Left empty, the matching feature is disabled
 # rather than acting on an arbitrary service. Set via bv-secrets.ini or the env.
@@ -299,6 +332,7 @@ def secret_rotation(kind: str, group: str, name: str = "") -> str:
     quel que soit leur groupe : l'une appartient a l'app, l'autre est derivee."""
     if secret_object(kind, name) != OBJ_PASSWORD or kind not in GEN_KINDS:
         return ROT_NEVER
+    group = normalize_group(group, kind)
     if group == "auto":
         return ROT_AUTO
     return ROT_ONDEMAND if group in ROTATE_GROUPS else ROT_NEVER
