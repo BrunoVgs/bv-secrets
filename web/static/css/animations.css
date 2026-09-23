@@ -129,9 +129,23 @@ details.leg[open] .legcol:nth-child(4){animation-delay:.19s}
   border-top-color:var(--acc2);border-right-color:var(--acc2);
   box-shadow:0 0 18px rgba(192,36,44,.45),inset 0 0 10px rgba(192,36,44,.12)}
 .loginbox .ring2{inset:11px;border:1.5px solid transparent;border-bottom-color:rgba(214,58,66,.5)}
+/* Au repos, l'anneau tourne lentement et la lueur respire : le coffre est
+   arme et attend. Tres lent et tres pale exprès -- on doit le remarquer en
+   regardant le sigle, jamais du coin de l'oeil pendant qu'on tape.
+   L'etat `pending` garde son sens : les memes anneaux accelerent et s'allument. */
+.loginbox .ring{opacity:.5;animation:bv-ring 22s linear infinite}
+.loginbox .ring2{opacity:.32;animation:bv-ring 14s linear infinite reverse}
+.loginbox .mark{animation:bv-breathe 6s ease-in-out infinite}
+@keyframes bv-breathe{
+  0%,100%{filter:drop-shadow(0 6px 22px rgba(192,36,44,.34))}
+  50%{filter:drop-shadow(0 6px 34px rgba(192,36,44,.62))}}
+
 .loginbox.pending .ring{opacity:1;animation:bv-ring .95s cubic-bezier(.5,.15,.4,.9) infinite}
 .loginbox.pending .ring2{opacity:1;animation:bv-ring 1.7s linear infinite reverse}
-.loginbox.pending .mark{filter:drop-shadow(0 3px 16px rgba(192,36,44,.7))}
+/* `animation:none` d'abord : une animation en cours bat une declaration
+   normale, donc sans ca la respiration de veille ecrasait ce halo et l'etat
+   « chargement » ne se voyait plus sur le sigle. */
+.loginbox.pending .mark{animation:none;filter:drop-shadow(0 3px 16px rgba(192,36,44,.7))}
 @keyframes bv-ring{to{transform:rotate(360deg)}}
 
 @media(prefers-reduced-motion:reduce){
@@ -139,3 +153,12 @@ details.leg[open] .legcol:nth-child(4){animation-delay:.19s}
     transition-duration:.01ms !important;scroll-behavior:auto !important}
   .nav:hover,.stat:hover,.btn:hover:not(:disabled){transform:none}
 }
+
+/* Sequence d'ouverture du login. Le fond tourne deja quand la page arrive :
+   ce qui entre, c'est le sigle, puis ce qui sert a agir. */
+@keyframes bv-boot-mark{
+  from{opacity:0;transform:scale(.88);filter:blur(6px)}
+  to{opacity:1;transform:none;filter:none}}
+@keyframes bv-boot-rest{
+  from{opacity:0;transform:translateY(10px)}
+  to{opacity:1;transform:none}}

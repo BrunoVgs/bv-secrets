@@ -10,7 +10,10 @@ STATIC = (Path(__file__).resolve().parent / "static")
 ASSET_TYPES = {".css": "text/css; charset=utf-8",
                ".js": "text/javascript; charset=utf-8",
                ".png": "image/png",
-               ".svg": "image/svg+xml"}
+               ".svg": "image/svg+xml",
+               # Les polices sont servies par nous : sans cette entree `asset()`
+               # les refuse et la page retombe sur une police systeme.
+               ".woff2": "font/woff2"}
 
 
 def _asset_files():

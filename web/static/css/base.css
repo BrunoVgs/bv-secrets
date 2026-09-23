@@ -1,6 +1,6 @@
 /* Minimal reset, typography, shared utilities. */
 *{box-sizing:border-box}
-html,body{margin:0;padding:0;background:var(--bg);color:var(--tx);font-family:var(--sans)}
+html,body{margin:0;padding:0;background:var(--bg);color:var(--tx);font-family:var(--mono)}
 body{background:
   radial-gradient(1200px 600px at 15% -10%,rgba(192,36,44,.10),transparent 60%),
   radial-gradient(900px 500px at 110% 110%,rgba(192,36,44,.06),transparent 55%),var(--bg);

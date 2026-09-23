@@ -6,9 +6,13 @@
   --panel:rgba(255,255,255,.035); --bd:rgba(255,255,255,.07); --bd2:rgba(255,255,255,.10);
   --hover:rgba(255,255,255,.05);
 
-  --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
-  --disp:'Michroma','Space Grotesk',system-ui,sans-serif;
-  --sans:'Space Grotesk',system-ui,-apple-system,sans-serif;
+  /* Deux familles, c'est tout. Monaspace Neon porte TOUT le texte : ici chaque
+     chose affichee est une cle, une valeur, une longueur ou un horodatage, et
+     une chasse fixe aligne les colonnes sans effort tout en rendant une valeur
+     tronquee visible d'un coup d'oeil. Michroma ne sert qu'au sigle.
+     (`--sans` a ete supprime : il ne designait plus rien de distinct.) */
+  --mono:'Monaspace Neon',ui-monospace,SFMono-Regular,Menlo,monospace;
+  --disp:'Michroma','Monaspace Neon',ui-monospace,monospace;
 
   /* One duration scale: all UI motion hangs off it. */
   --t-fast:.14s; --t-mid:.24s; --t-slow:.42s;

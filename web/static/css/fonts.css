@@ -1,0 +1,21 @@
+/* Polices servies par nous, pas par un tiers.
+
+   Un coffre a secrets qui va chercher ses polices chez Google annonce chaque
+   ouverture de session a un tiers et tombe en panne de rendu si le CDN tombe.
+   Deux familles, quatre fichiers, ~150 ko : moins que ce que coutaient trois
+   familles distantes.
+
+   Monaspace Neon (GitHub, OFL) porte tout le texte. Ce n'est pas de la
+   decoration : dans cette application tout est une cle, une valeur, une
+   longueur, un horodatage. Une chasse fixe aligne les colonnes sans effort et
+   rend une valeur tronquee immediatement visible.
+
+   Michroma ne sert QUE au sigle. */
+@font-face{font-family:'Monaspace Neon';font-style:normal;font-weight:400;
+  font-display:swap;src:url(../fonts/monaspace-neon-400.woff2) format('woff2')}
+@font-face{font-family:'Monaspace Neon';font-style:normal;font-weight:500;
+  font-display:swap;src:url(../fonts/monaspace-neon-500.woff2) format('woff2')}
+@font-face{font-family:'Monaspace Neon';font-style:normal;font-weight:700;
+  font-display:swap;src:url(../fonts/monaspace-neon-700.woff2) format('woff2')}
+@font-face{font-family:'Michroma';font-style:normal;font-weight:400;
+  font-display:swap;src:url(../fonts/michroma-400.woff2) format('woff2')}

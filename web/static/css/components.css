@@ -81,7 +81,7 @@
 /* ── controls ── */
 input.search{flex:1;max-width:420px;padding:11px 16px;border-radius:10px;
   background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.09);color:var(--tx);
-  font-family:var(--sans);font-size:13px;outline:none}
+  font-family:var(--mono);font-size:13px;outline:none}
 input.search:focus{border-color:rgba(192,36,44,.55);box-shadow:0 0 0 3px rgba(192,36,44,.12)}
 
 .filt{padding:8px 15px;border-radius:9px;cursor:pointer;font-family:var(--mono);font-size:11px;
@@ -94,10 +94,26 @@ input.search:focus{border-color:rgba(192,36,44,.55);box-shadow:0 0 0 3px rgba(19
   border-color:color-mix(in srgb,var(--c) 48%,transparent);color:var(--c)}
 
 .btn{font-family:var(--mono);font-size:10px;padding:6px 12px;border-radius:7px;
-  background:rgba(255,255,255,.05);border:1px solid var(--bd2);color:#cfcfcf;position:relative}
+  background:rgba(255,255,255,.05);border:1px solid var(--bd2);color:#cfcfcf;
+  position:relative;overflow:hidden;isolation:isolate}
+
+/* Le survol REMPLIT le bouton au lieu de changer sa couleur d'un coup : une
+   nappe qui balaie depuis la gauche, sur une longue deceleration. La nappe est
+   un pseudo-element en z-index negatif ; `isolation:isolate` l'enferme dans le
+   bouton, ce qui evite d'avoir a poser un z-index sur chaque libelle. */
+.btn::before{content:"";position:absolute;inset:0;z-index:-1;background:var(--hover);
+  transform:scaleX(0);transform-origin:left center;
+  transition:transform var(--t-slow) var(--ease-out)}
+.btn:hover:not(:disabled)::before,
+.btn:focus-visible:not(:disabled)::before{transform:scaleX(1)}
+/* Relache depuis la DROITE : la nappe sort par ou elle allait, au lieu de
+   revenir sur ses pas. C'est ce detail qui rend le mouvement fluide. */
+.btn:not(:hover)::before{transform-origin:right center}
+.btn.acc::before{background:rgba(192,36,44,.22)}
+.btn.solid::before{background:linear-gradient(145deg,var(--acc2),var(--acc))}
 .btn.acc{background:rgba(192,36,44,.10);border-color:rgba(192,36,44,.35);color:var(--acc4)}
 .btn:disabled{opacity:.35;cursor:not-allowed}
-.btn.big{font-family:var(--sans);font-size:12.5px;padding:10px 16px;border-radius:9px}
+.btn.big{font-family:var(--mono);font-size:12.5px;padding:10px 16px;border-radius:9px}
 .btn.solid{background:linear-gradient(145deg,var(--acc),#8f1d23);border:0;color:#fff;font-weight:600;
   box-shadow:0 4px 14px rgba(192,36,44,.3)}
 
