@@ -16,6 +16,7 @@ est signe, sinon les deux cotes finissent par ne pas signer la meme chose.
 import hashlib
 import hmac
 import secrets as pysecrets
+import threading
 import time
 
 SCHEME = "BV1-HMAC-SHA256"
@@ -80,14 +81,20 @@ class ReplayGuard:
     def __init__(self, window: int):
         self.window = window
         self.seen = {}
+        # L'ecouteur est un ThreadingHTTPServer : deux requetes portant le MEME
+        # nonce peuvent arriver en parallele. Sans verrou, les deux threads
+        # voient le nonce absent et l'acceptent -- le rejeu passe exactement
+        # dans le cas qu'on veut interdire.
+        self._lock = threading.Lock()
 
     def remember(self, nonce: str, now: int) -> bool:
         """-> False si ce nonce a deja servi."""
-        self._prune(now)
-        if nonce in self.seen:
-            return False
-        self.seen[nonce] = now + self.window
-        return True
+        with self._lock:
+            self._prune(now)
+            if nonce in self.seen:
+                return False
+            self.seen[nonce] = now + self.window
+            return True
 
     def _prune(self, now):
         if len(self.seen) < 2048:
@@ -110,27 +117,34 @@ class RateLimiter:
         self.block_seconds = block_seconds
         self.fails = {}
         self.blocked = {}
+        # Meme raison que ReplayGuard : sans verrou, N threads qui echouent en
+        # parallele se marchent dessus et le compteur perd des echecs.
+        self._lock = threading.Lock()
 
     def blocked_for(self, source: str, now=None) -> int:
         """-> secondes de blocage restantes, 0 si la source peut parler."""
         now = int(time.time()) if now is None else now
-        until = self.blocked.get(source, 0)
-        if until <= now:
-            self.blocked.pop(source, None)
-            return 0
-        return until - now
+        with self._lock:
+            until = self.blocked.get(source, 0)
+            if until <= now:
+                self.blocked.pop(source, None)
+                return 0
+            return until - now
 
     def record_failure(self, source: str, now=None) -> bool:
         """-> True si cet echec vient de declencher un blocage."""
         now = int(time.time()) if now is None else now
-        window = [t for t in self.fails.get(source, []) if t > now - self.block_seconds]
-        window.append(now)
-        self.fails[source] = window
-        if len(window) >= self.max_fails:
-            self.blocked[source] = now + self.block_seconds
-            self.fails.pop(source, None)
-            return True
-        return False
+        with self._lock:
+            window = [t for t in self.fails.get(source, [])
+                      if t > now - self.block_seconds]
+            window.append(now)
+            self.fails[source] = window
+            if len(window) >= self.max_fails:
+                self.blocked[source] = now + self.block_seconds
+                self.fails.pop(source, None)
+                return True
+            return False
 
     def record_success(self, source: str):
-        self.fails.pop(source, None)
+        with self._lock:
+            self.fails.pop(source, None)

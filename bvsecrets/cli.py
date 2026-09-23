@@ -137,15 +137,10 @@ def cmd_hosts(a, e):
         key = "oui" if hosts.key(name) else "NON"
         state = "(non testé, --test pour interroger)"
         if a.test:
-            try:
-                info = remote.health(name)
-                # Une reponse sans `version` = l'hote repond mais n'a pas
-                # reconnu la cle : le distinguer d'un hote muet fait gagner
-                # le mauvais quart d'heure evident.
-                state = f"joignable, v{info['version']}" if info.get("version") \
-                    else "joignable, CLÉ REFUSÉE"
-            except Exception as exc:
-                state = str(exc).split(":", 1)[-1].strip()
+            # Meme diagnostic que le dashboard : un seul endroit decide ce que
+            # « joignable » veut dire.
+            result = remote.probe(name)
+            state = f"{result['state']} — {result['detail']}"
         print(f"{name:12} {hosts.url(name):34} {key:5} "
               f"{len(hosted.get(name, [])):<8} {state}")
 

@@ -12,7 +12,7 @@ import urllib.error
 import urllib.request
 
 from . import hosts, sign
-from .config import REMOTE_TIMEOUT, ConfigError
+from .config import REMOTE_TIMEOUT, WORKER_SKEW, ConfigError
 
 CONNECT_TIMEOUT = 10
 POLL_SECONDS = 1.0
@@ -61,6 +61,49 @@ def _call(host: str, method: str, path: str, payload=None, timeout=CONNECT_TIMEO
 
 def health(host: str) -> dict:
     return _call(host, "GET", "/v1/health")
+
+
+def probe(host: str) -> dict:
+    """Etat d'un hote distant : {state, detail, skew}.
+
+    Quatre issues distinctes, parce qu'elles ne se reparent pas pareil : muet
+    (machine ou service a terre), horloge decalee, joignable mais cle
+    differente, ou tout va bien.
+
+    L'horloge est testee AVANT la cle. Un ecart met la signature hors fenetre,
+    donc un hote a l'heure fausse se presente exactement comme un hote dont la
+    cle est mauvaise -- et on cherche la cle pendant des heures alors qu'il faut
+    regarder ntpd. `/v1/health` publie l'heure du serveur sans signature, ce qui
+    permet justement de trancher avant d'avoir une cle qui fonctionne.
+
+    La fenetre comparee est CELLE D'ICI ; l'hote distant peut avoir la sienne,
+    donc ce chiffre est un diagnostic, pas un verdict."""
+    if host not in hosts.names():
+        return {"host": host, "state": "unknown", "detail": "hôte non déclaré"}
+    try:
+        info = health(host)
+    except Exception as exc:
+        return {"host": host, "state": "unreachable",
+                "detail": str(exc).split(":", 1)[-1].strip()}
+
+    skew = info["time"] and int(time.time()) - info["time"] \
+        if isinstance(info.get("time"), int) else None
+
+    if not info.get("version"):
+        if skew is not None and abs(skew) > WORKER_SKEW:
+            return {"host": host, "state": "clock", "skew": skew,
+                    "detail": f"horloge décalée de {skew:+d}s — au-delà de la "
+                              f"fenêtre de {WORKER_SKEW}s, aucune signature "
+                              f"ne peut passer"}
+        return {"host": host, "state": "badkey", "skew": skew,
+                "detail": "joignable, mais la clé est refusée"}
+
+    detail = f"v{info['version']}"
+    if skew is not None and abs(skew) > WORKER_SKEW // 2:
+        # Sous la fenetre, donc ca marche -- mais ca cassera si l'ecart grandit.
+        detail += f" (horloge {skew:+d}s)"
+    return {"host": host, "state": "ok", "detail": detail, "skew": skew,
+            "actions": info.get("actions") or []}
 
 
 def submit(host: str, **job) -> str:

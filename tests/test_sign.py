@@ -5,6 +5,7 @@ refuse : une requete rejouee, un corps modifie apres coup, une methode ou un
 chemin changes, une horloge trop decalee. Chacun de ces cas a son test, parce
 qu'ils se cassent independamment.
 """
+import threading
 import time
 import unittest
 
@@ -128,3 +129,83 @@ class TestRateLimiter(unittest.TestCase):
         limiter.record_failure("10.8.0.4", now=1000)
         self.assertTrue(limiter.blocked_for("10.8.0.4", now=1000))
         self.assertEqual(limiter.blocked_for("10.8.0.5", now=1000), 0)
+
+
+class TestGuardsUnderConcurrency(unittest.TestCase):
+    """L'ecouteur est un ThreadingHTTPServer : ces deux structures sont touchees
+    par plusieurs threads a la fois. Un compteur qui perd des increments est
+    ennuyeux ; un anti-rejeu qui accepte deux fois le meme nonce ne sert a rien."""
+
+    def test_only_one_thread_wins_the_same_nonce(self):
+        guard = sign.ReplayGuard(300)
+        wins, start = [], threading.Barrier(16)
+
+        def race():
+            start.wait()
+            if guard.remember("le-meme-nonce", 1000):
+                wins.append(1)
+
+        threads = [threading.Thread(target=race) for _ in range(16)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        self.assertEqual(len(wins), 1)
+
+    def test_no_failure_is_lost(self):
+        limiter = sign.RateLimiter(1000, 60)   # barre hors d'atteinte : on compte
+        start = threading.Barrier(16)
+
+        def race():
+            start.wait()
+            for _ in range(20):
+                limiter.record_failure("10.8.0.4", now=1000)
+
+        threads = [threading.Thread(target=race) for _ in range(16)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        self.assertEqual(len(limiter.fails["10.8.0.4"]), 16 * 20)
+
+
+class TestProbeTellsClockFromKey(unittest.TestCase):
+    """Un ecart d'horloge met la signature hors fenetre, donc un hote a l'heure
+    fausse repond exactement comme un hote dont la cle differe. Les confondre
+    envoie chercher une cle pendant des heures au lieu de regarder ntpd."""
+
+    def setUp(self):
+        from bvsecrets import hosts, remote
+        self.remote, self.hosts = remote, hosts
+        self._names, self._health = hosts.names, remote.health
+        hosts.names = lambda: ["agent"]
+
+    def tearDown(self):
+        self.hosts.names, self.remote.health = self._names, self._health
+
+    def _probe_with(self, payload):
+        self.remote.health = lambda host: payload
+        return self.remote.probe("agent")
+
+    def test_a_large_skew_is_reported_as_a_clock_problem(self):
+        from bvsecrets.config import WORKER_SKEW
+        far = int(time.time()) - (WORKER_SKEW + 600)
+        result = self._probe_with({"ok": True, "time": far})
+        self.assertEqual(result["state"], "clock")
+        self.assertIn("horloge", result["detail"])
+
+    def test_a_good_clock_without_version_is_a_key_problem(self):
+        result = self._probe_with({"ok": True, "time": int(time.time())})
+        self.assertEqual(result["state"], "badkey")
+
+    def test_a_reachable_host_reports_its_version(self):
+        result = self._probe_with({"ok": True, "time": int(time.time()),
+                                   "version": "1.1.1", "actions": ["set_value"]})
+        self.assertEqual(result["state"], "ok")
+        self.assertIn("1.1.1", result["detail"])
+
+    def test_an_old_agent_without_time_still_works(self):
+        # compatibilite : un hote qui ne publie pas encore son heure
+        result = self._probe_with({"ok": True, "version": "1.1.1"})
+        self.assertEqual(result["state"], "ok")
+        self.assertIsNone(result["skew"])

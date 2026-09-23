@@ -16,6 +16,7 @@ d'authentification sont comptes par source et finissent par la bloquer.
 import json
 import re
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from .. import hosts, sign, spool
@@ -31,6 +32,10 @@ JOB_RE = re.compile(r"^/v1/jobs/([0-9a-zA-Z]+)$")
 # inconnue est refusee, jamais transmise.
 REMOTE_ACTIONS = {"set_value", "apply", "rotate", "doctor"}
 MAX_BODY = 64 * 1024
+# L'adresse d'ecoute est celle de wg0, et l'interface n'existe pas encore quand
+# le worker demarre au boot. On reessaie au lieu d'abandonner -- et surtout au
+# lieu de tuer le worker, qui a un autre travail que celui-ci.
+BIND_RETRY_SECONDS = 15
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -91,11 +96,11 @@ class Handler(BaseHTTPRequestHandler):
             # Signee : de quoi verifier qu'on parle a la bonne instance, avec la
             # bonne cle. Un health anonyme ne compte pas comme un echec, sinon un
             # simple check de disponibilite finirait par bloquer sa propre source.
-            ok, _, _ = self._authorize_quiet(body)
-            if ok:
-                return self._send(200, {"ok": True, "version": VERSION,
+            base = {"ok": True, "time": int(time.time())}
+            if self._authorize_quiet(body)[0]:
+                return self._send(200, {**base, "version": VERSION,
                                         "actions": sorted(REMOTE_ACTIONS)})
-            return self._send(200, {"ok": True})
+            return self._send(200, base)
         ok, code, message = self._authorize(body)
         if not ok:
             return self._send(code, {"error": message})
@@ -148,17 +153,50 @@ class Server(ThreadingHTTPServer):
         super().__init__(addr, Handler)
 
 
+def _serve(server, emit):
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    emit(f"bvsecrets-worker: écoute sur {WORKER_BIND}:{WORKER_PORT} "
+         f"(requêtes signées, fenêtre {WORKER_SKEW}s)")
+
+
+def _bind_when_available(emit):
+    """Reessaie tant que l'adresse n'existe pas.
+
+    Au boot, le worker demarre avant que wg0 soit montee : la liaison echoue
+    avec EADDRNOTAVAIL. Abandonner laisserait la machine injoignable jusqu'au
+    prochain redemarrage manuel du service, et lever tuerait le worker, qui a un
+    autre travail que d'ecouter."""
+    announced = False
+    while True:
+        try:
+            _serve(Server((WORKER_BIND, WORKER_PORT), emit), emit)
+            return
+        except OSError as exc:
+            if not announced:
+                emit(f"bvsecrets-worker: {WORKER_BIND}:{WORKER_PORT} pas encore "
+                     f"disponible ({exc.strerror or exc}) — nouvel essai toutes "
+                     f"les {BIND_RETRY_SECONDS}s. Le reste du worker tourne.")
+                announced = True
+            time.sleep(BIND_RETRY_SECONDS)
+
+
 def start(emit=print):
-    """Demarre l'ecouteur dans un thread, ou explique pourquoi il ne demarre pas.
-    -> le Server, ou None."""
+    """Demarre l'ecouteur, ou explique pourquoi il ne demarre pas.
+
+    Ne leve jamais : le spool local doit continuer d'etre draine meme si
+    l'ecouteur ne peut pas se lier."""
     if not WORKER_BIND:
         return None
     if not hosts.local_key():
         emit("bvsecrets-worker: BV_WORKER_BIND posé mais aucune clé "
              "(BV_WORKER_KEY ou <store>/hosts/self.key) — écouteur NON démarré.")
         return None
-    server = Server((WORKER_BIND, WORKER_PORT), emit)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    emit(f"bvsecrets-worker: écoute sur {WORKER_BIND}:{WORKER_PORT} "
-         f"(requêtes signées, fenêtre {WORKER_SKEW}s)")
+    try:
+        server = Server((WORKER_BIND, WORKER_PORT), emit)
+    except OSError as exc:
+        emit(f"bvsecrets-worker: {WORKER_BIND}:{WORKER_PORT} indisponible "
+             f"({exc.strerror or exc}) — attente en arrière-plan.")
+        threading.Thread(target=_bind_when_available, args=(emit,), daemon=True).start()
+        return None
+    _serve(server, emit)
     return server

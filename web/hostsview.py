@@ -28,18 +28,6 @@ def data() -> dict:
 
 
 def probe(name: str) -> dict:
-    """Interroge un hote. Trois issues distinctes, parce qu'elles se reparent
-    differemment : muet (machine ou service down), joignable mais cle refusee
-    (les deux cotes n'ont pas la meme), joignable et d'accord."""
-    if name not in hosts.names():
-        return {"name": name, "state": "unknown", "detail": "hôte non déclaré"}
-    try:
-        info = remote.health(name)
-    except Exception as exc:
-        return {"name": name, "state": "unreachable",
-                "detail": str(exc).split(":", 1)[-1].strip()}
-    if not info.get("version"):
-        return {"name": name, "state": "badkey",
-                "detail": "joignable, mais la clé est refusée"}
-    return {"name": name, "state": "ok", "detail": f"v{info['version']}",
-            "actions": info.get("actions") or []}
+    """Le diagnostic vient du coeur : le dashboard et la CLI doivent dire la
+    meme chose d'un meme hote."""
+    return {**remote.probe(name), "name": name}

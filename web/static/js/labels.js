@@ -75,6 +75,7 @@ export const MODE_HELP = {
 export const HOST_STATE = {
   ok: { label: "joignable", color: "#3fbf5f" },
   badkey: { label: "clé refusée", color: "#d9a13b" },
+  clock: { label: "horloge décalée", color: "#d9a13b" },
   unreachable: { label: "injoignable", color: "#e06060" },
   unknown: { label: "non déclaré", color: "#888" },
 };

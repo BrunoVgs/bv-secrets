@@ -198,11 +198,20 @@ class TwoInstances(unittest.TestCase):
             self._post({"action": "doctor"}, key=KEY)   # même la BONNE clé
         self.assertEqual(cm.exception.code, 429)
 
-    def test_health_says_nothing_without_the_key(self):
+    def test_health_reveals_only_liveness_and_the_clock_without_the_key(self):
+        """L'heure est publiee sans signature EXPRES : elle n'est pas secrete, et
+        sans elle un ecart d'horloge se presente comme une cle refusee. La
+        version et la liste des actions, elles, attendent la signature."""
         _, anon = self._get("/v1/health", key=None)
-        self.assertEqual(anon, {"ok": True})
+        self.assertEqual(anon["ok"], True)
+        self.assertIsInstance(anon["time"], int)
+        self.assertNotIn("version", anon)
+        self.assertNotIn("actions", anon)
+
+    def test_a_signed_health_says_who_it_is(self):
         _, named = self._get("/v1/health")
         self.assertIn("version", named)
+        self.assertIn("set_value", named["actions"])
 
     # ---- le chemin complet ----
     def test_a_value_pushed_from_the_control_plane_lands_in_the_agent_file(self):
@@ -287,3 +296,56 @@ class TwoInstances(unittest.TestCase):
                 return results[-1], json.loads(results[-1].read_text())
             time.sleep(0.3)
         self.fail("aucun résultat de job")
+
+
+class WorkerSurvivesAnUnreachableBind(unittest.TestCase):
+    """Au boot, le worker demarre avant que wg0 soit montee : l'adresse d'ecoute
+    n'existe pas encore. Lever la ferait mourir le worker, qui a un autre travail
+    -- drainer le spool local -- et la machine resterait muette jusqu'a une
+    intervention manuelle. Il doit tourner quand meme, et se lier plus tard."""
+
+    def setUp(self):
+        import tempfile
+        self.tmp = tempfile.TemporaryDirectory()
+        base = Path(self.tmp.name)
+        self.store = base / "store"
+        self.store.mkdir()
+        conf = base / "s.conf"
+        conf.write_text("[APP_SECRET]\nkind = password\nlength = 16\n")
+        self.worker = subprocess.Popen(
+            [sys.executable, "-m", "bvsecrets.worker"],
+            env={**os.environ, "PYTHONPATH": str(ROOT),
+                 "BV_SECRETS_DIR": str(self.store), "BV_SECRETS_CONF": str(conf),
+                 # 203.0.113.0/24 est reserve a la documentation (RFC 5737) :
+                 # cette adresse ne peut appartenir a aucune interface locale.
+                 "BV_WORKER_BIND": "203.0.113.1", "BV_WORKER_PORT": "8765",
+                 "BV_WORKER_KEY": KEY, "NO_COLOR": "1"},
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+
+    def tearDown(self):
+        self.worker.terminate()
+        try:
+            self.worker.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            self.worker.kill()
+            self.worker.wait(timeout=5)
+        if self.worker.stdout:
+            self.worker.stdout.close()
+        self.tmp.cleanup()
+
+    def test_the_worker_stays_alive_and_drains_its_spool(self):
+        from bvsecrets import spool
+        requests = self.store / "spool" / "requests"
+        deadline = time.time() + 20
+        while not requests.is_dir() and time.time() < deadline:
+            time.sleep(0.3)
+        self.assertIsNone(self.worker.poll(), "le worker est mort au démarrage")
+
+        jid = "aaaaaaaaaaaaaaaa"
+        (requests / f"{jid}.json").write_text(json.dumps(
+            {"id": jid, "action": "doctor", "only": []}))
+        results = self.store / "spool" / "results" / f"{jid}.json"
+        while not results.exists() and time.time() < deadline:
+            time.sleep(0.3)
+        self.assertTrue(results.exists(), "le spool local n'a pas été drainé")
+        self.assertIsNone(self.worker.poll())
