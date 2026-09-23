@@ -10,7 +10,7 @@ from pathlib import Path
 import secrets as pysecrets
 
 from . import (adopt, audit, conf_yaml, conffile, elevation, host, hosts,
-               remote, service, ui, validate)
+               remote, service, totp, ui, validate)
 from .config import (CONF, COMPOSE_DIR, CONFIG_FILE, GEN_KINDS, LEAKS_MAX_BYTES, is_identifier, KEYFILE,
                      LOCAL, MASTER, MIRROR, PROJECT_DIR, RENDER_DIR, SECRETS_DIR,
                      OBJ_ORDER, is_yaml, looks_like_apikey, secret_object,
@@ -111,6 +111,79 @@ def cmd_rotate(a, e):
 
 def cmd_apply(a, e):
     e.apply(e.select_apply(a.only), a.yes, _log)
+
+
+TOTP_SEED = "SECRETS_DASHBOARD_TOTP"
+TOTP_RECOVERY = "SECRETS_DASHBOARD_RECOVERY"
+
+
+def _totp_declare(e):
+    """Declare les deux secrets s'ils manquent. Le seed est `kind: totp`, donc
+    hors GEN_KINDS : aucun `rotate` nu ne peut le regenerer et desynchroniser le
+    jeton."""
+    missing = []
+    if TOTP_SEED not in e.cfg:
+        missing.append(conffile.render_section(
+            TOTP_SEED, "totp", "manual", [f"env:bv-secrets-web#BV_DASH_TOTP"],
+            note="seed TOTP du dashboard - regenere UNIQUEMENT par `bv-secrets totp --enrol`"))
+    if TOTP_RECOVERY not in e.cfg:
+        missing.append(conffile.render_section(
+            TOTP_RECOVERY, "opaque", "manual",
+            [f"env:bv-secrets-web#BV_DASH_RECOVERY"],
+            note="empreintes scrypt des codes de secours, separees par des virgules"))
+    if missing:
+        conffile.append_sections(missing)
+        print(f"{len(missing)} section(s) ajoutée(s) à {CONF}")
+
+
+def cmd_totp(a, e):
+    """Etat de l'enrolement, ou nouvel enrolement avec `--enrol`."""
+    seed = e.data.get(TOTP_SEED, "")
+    hashes = [h for h in (e.data.get(TOTP_RECOVERY, "") or "").split(",") if h]
+
+    if not a.enrol:
+        if not seed:
+            print("TOTP non enrôlé. `bv-secrets totp --enrol` pour commencer.")
+            return 1
+        print(f"TOTP enrôlé · période {totp.STEP}s · {totp.DIGITS} chiffres · "
+              f"tolérance ±{totp.DRIFT * totp.STEP}s")
+        print(f"codes de secours restants : {len(hashes)}")
+        print(f"code attendu en ce moment : {totp.code(seed)}")
+        return 0
+
+    if seed and not a.yes:
+        raise ConfigError(
+            "un seed existe déjà. Le remplacer invalide le jeton enrôlé ET tous "
+            "les codes de secours. Ajouter --yes pour le faire quand même.")
+
+    new_seed = totp.new_seed()
+    codes = totp.new_recovery_codes()
+    _totp_declare(e)
+
+    data = parse_env(MASTER)
+    data[TOTP_SEED] = new_seed
+    data[TOTP_RECOVERY] = ",".join(totp.hash_recovery(c) for c in codes)
+    write_env(MASTER, data)
+    Engine.touch_meta([TOTP_SEED, TOTP_RECOVERY])
+
+    bar = "=" * 72
+    print(f"\n{bar}\nÀ NOTER MAINTENANT — rien de tout ceci ne sera réaffiché.\n{bar}\n")
+    print(f"  base32 (application / QR) : {new_seed}")
+    print(f"  hex 20 octets (firmware)  : {totp.seed_hex(new_seed)}")
+    print(f"  période / chiffres        : {totp.STEP}s / {totp.DIGITS}")
+    print(f"  URI                       : {totp.uri(new_seed, 'bv', 'bv-secrets')}")
+    print("\n  CODES DE SECOURS (usage unique) :")
+    for i in range(0, len(codes), 2):
+        print("     " + "   ".join(codes[i:i + 2]))
+    print(f"\n{bar}")
+    print("Les sortir de cette machine : c'est le seul chemin de retour si le")
+    print("jeton est perdu. Le seed est en store ; les codes, eux, ne sont")
+    print("gardés que hachés — personne ne peut les réafficher.")
+    print(f"{bar}\n")
+    print(f"Code attendu à l'instant : {totp.code(new_seed)}")
+    print("\nEnsuite : `bv-secrets apply --only "
+          f"{TOTP_SEED},{TOTP_RECOVERY} --yes` pour les pousser vers le dashboard.")
+    return 0
 
 
 def cmd_hosts(a, e):
@@ -588,6 +661,7 @@ _FAMILIES = [
     ("adoption", ["scan", "import", "adopt"]),
     ("store chiffré", ["seal", "open"]),
     ("instances distantes", ["hosts", "push"]),
+    ("second facteur", ["totp"]),
 ]
 
 _EXAMPLES = [
@@ -657,6 +731,8 @@ def build_parser():
     add("plan", "montre ce que rotate ferait (dry-run)", cmd_plan, only)
     add("rotate", "régénère + applique partout (défaut : groupe auto)", cmd_rotate, only, yes)
     add("apply", "pousse les valeurs courantes vers les sinks (sans régénérer)", cmd_apply, only, yes)
+    add("totp", "état de l'enrôlement TOTP du dashboard, ou nouvel enrôlement",
+        cmd_totp, (("--enrol",), {"action": "store_true"}), yes)
     add("hosts", "instances bv-secrets distantes : URL, clé, état", cmd_hosts,
         (("name",), {"nargs": "?", "default": ""}),
         (("--test",), {"action": "store_true", "help": "interroger chaque hôte"}),

@@ -210,7 +210,11 @@ ZSH_HISTORY = _path("BV_ZSH_HISTORY", Path.home() / ".zsh_history")
 GEN_KINDS = {"password", "hex", "b64", "userpass", "passphrase"}
 # apikey = key issued by a third-party app; can't be generated (only valid if the
 # app knows it). Regenerate in the app, then `set`.
-FIXED_KINDS = {"apikey", "opaque", "manual", "computed"}
+# `totp` est ici et pas dans GEN_KINDS : le seed est produit UNE fois par
+# `bv-secrets totp --enrol`, qui l'affiche pour l'application. Le laisser
+# generable ferait qu'un `rotate` nu le regenere et desynchronise le telephone
+# sans rien dire -- la meme classe de piege que l'apply qui sautait les apikey.
+FIXED_KINDS = {"apikey", "opaque", "manual", "computed", "totp"}
 ALL_KINDS = GEN_KINDS | FIXED_KINDS
 # Du plus automatique au moins ; l'UI lit cet ordre au lieu de le redeclarer.
 GROUP_ORDER = ("auto", "app", "manual")
@@ -255,6 +259,17 @@ WORKER_SKEW = int(_setting("BV_WORKER_SKEW", "300") or "300")
 # Echecs d'authentification tolerés par source avant blocage temporaire.
 WORKER_MAX_FAILS = int(_setting("BV_WORKER_MAX_FAILS", "10") or "10")
 WORKER_BLOCK_SECONDS = int(_setting("BV_WORKER_BLOCK_SECONDS", "300") or "300")
+
+# TOTP. 30 s et 6 chiffres sont ce que toute application d'authentification
+# suppose : ne les changer que si le jeton d'en face est a toi.
+TOTP_STEP = int(_setting("BV_TOTP_STEP", "30") or "30")
+TOTP_DIGITS = int(_setting("BV_TOTP_DIGITS", "6") or "6")
+# Fenetres de tolerance de part et d'autre. 1 = +/-30 s, ce qui suffit a un
+# appareil dont l'heure vient de NTP. Un jeton materiel SANS horloge sauvegardee
+# (ESP8266, ESP32 sans RTC) derive de quelques secondes par jour des qu'il perd
+# le NTP : monter a 2 lui laisse de l'air, au prix d'une fenetre de rejeu plus
+# longue -- ce que l'anti-rejeu sur le code compense.
+TOTP_DRIFT = int(_setting("BV_TOTP_DRIFT", "1") or "1")
 
 # Ecouteur du worker. Vide = desactive : une instance n'accepte de job distant
 # que si on l'a explicitement dit, et on l'attache a wg0, jamais a 0.0.0.0.
