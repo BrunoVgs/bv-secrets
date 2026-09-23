@@ -200,3 +200,52 @@ class TestApplyIsIdempotent(CLITestCase):
         r = self.run_cli("apply")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("1 modifié", r.stdout)
+
+
+class TestLeaksSurvivesBinaryFiles(CLITestCase):
+    """`leaks --staged` lisait les blobs indexes en UTF-8 et levait des qu'un
+    fichier binaire etait indexe -- une police, une image. Le hook pre-commit
+    mourait avec la commande, donc il ne protegeait plus rien au moment ou on
+    en avait le plus besoin."""
+
+    def setUp(self):
+        super().setUp()
+        self.conf.write_text(
+            "[APP_SECRET]\nkind = password\nlength = 16\n"
+            f"sinks =\n    envfile:{self.app_env}#APP_SECRET\n")
+        (self.store / "bv-secrets.env").write_text("APP_SECRET=valeursecrete\n")
+        self.repo = self.base / "repo"
+        self.repo.mkdir()
+        for argv in (["init", "-q"], ["config", "user.email", "t@t"],
+                     ["config", "user.name", "t"]):
+            subprocess.run(["git", *argv], cwd=self.repo, capture_output=True)
+
+    def _stage(self, name, data):
+        path = self.repo / name
+        path.write_bytes(data)
+        subprocess.run(["git", "add", name], cwd=self.repo, capture_output=True)
+
+    def run_cli(self, *args):
+        env = {
+            **os.environ,
+            "PYTHONPATH": str(ROOT),
+            "BV_SECRETS_DIR": str(self.store),
+            "BV_SECRETS_CONF": str(self.conf),
+            "NO_COLOR": "1",
+        }
+        return subprocess.run([sys.executable, "-m", "bvsecrets.cli", *args],
+                              env=env, cwd=self.repo, capture_output=True, text=True)
+
+    def test_a_staged_binary_does_not_abort_the_scan(self):
+        self._stage("police.woff2", bytes([0x00, 0xf4, 0x9d, 0x01]) * 64)
+        r = self.run_cli("leaks", "--staged")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("Clean", r.stdout)
+
+    def test_a_real_leak_is_still_caught_beside_it(self):
+        self._stage("police.woff2", bytes([0x00, 0xf4, 0x9d, 0x01]) * 64)
+        self._stage("config.yml", b"token: valeursecrete\n")
+        r = self.run_cli("leaks", "--staged")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("APP_SECRET", r.stdout)
+        self.assertIn("config.yml", r.stdout)

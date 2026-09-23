@@ -414,17 +414,23 @@ def _leaks_tree(values):
 
 
 def _leaks_staged(values):
-    """Scanne le contenu STAGÉ (index git), pas l'arbre : ce qui part au commit."""
+    """Scanne le contenu STAGÉ (index git), pas l'arbre : ce qui part au commit.
+
+    Les blobs sont lus en OCTETS. Les decoder en UTF-8 faisait lever la commande
+    des qu'un fichier binaire etait indexe -- une police, une image -- et le hook
+    pre-commit mourait avec elle au lieu de proteger le commit."""
+    needles = {k: v.encode() for k, v in values.items()}
     listing = subprocess.run(["git", "diff", "--cached", "--name-only", "--diff-filter=ACM"],
                              capture_output=True, text=True)
     hits = []
     for f in listing.stdout.split("\n"):
         if not f:
             continue
-        blob = subprocess.run(["git", "show", f":{f}"], capture_output=True, text=True)
-        if blob.returncode:
+        blob = subprocess.run(["git", "show", f":{f}"], capture_output=True)
+        if blob.returncode or b"\x00" in blob.stdout:
             continue
-        hits += [f"LEAK  {f}  contient la valeur de {k}" for k, v in values.items() if v in blob.stdout]
+        hits += [f"LEAK  {f}  contient la valeur de {k}"
+                 for k, v in needles.items() if v in blob.stdout]
     return hits
 
 
