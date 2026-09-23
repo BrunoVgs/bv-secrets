@@ -14,7 +14,12 @@
                right (the shader does `suv.x -= iOffsetX`). Default 0.
                Ref: -0.36 places the center near 30% of the width in 16:9.
      tint      "acc" (BV accent, default) or "raw" (original, cold tint)
+
+   Methodes : converge(ms) ramene les orbes au centre, expand(ms) les renvoie
+   sur leur orbite. Sans WebGL les deux n'existent pas : l'appelant teste.
 */
+const BASE_RADIUS = 0.2;   // rayon d'orbite au repos
+
 customElements.define('bv-orbs', class extends HTMLElement {
   static observedAttributes = ['offset-x'];
 
@@ -95,10 +100,12 @@ customElements.define('bv-orbs', class extends HTMLElement {
     const res = () => new THREE.Vector3(W(), H(), 1);
 
     const matA = new THREE.ShaderMaterial({
-      uniforms: { iResolution: { value: res() }, iTime: { value: 0 }, iOffsetX: { value: 0 } },
+      uniforms: { iResolution: { value: res() }, iTime: { value: 0 },
+                 iOffsetX: { value: 0 }, iRadius: { value: BASE_RADIUS } },
       vertexShader: VERT,
       fragmentShader: PREFIX + `
         uniform float iOffsetX;
+        uniform float iRadius;
         #define clamps(x) clamp(x,0.,1.)
 
         vec3 rX(vec3 p, float a){ vec3 q=p; float c=cos(a),s=sin(a);
@@ -113,7 +120,7 @@ customElements.define('bv-orbs', class extends HTMLElement {
         vec3 animation(vec2 uv, float time){
           float circles = 0.;
           for(float k=0.; k<8.; k++){
-            vec3 pos = vec3(dirDist(time*k*0.1, 0.2), 0.);
+            vec3 pos = vec3(dirDist(time*k*0.1, iRadius), 0.);
             pos = rY(pos, time*1.1);
             pos = rZ(pos, time*2.15);
             pos = rX(pos, time*0.52);
@@ -184,6 +191,30 @@ customElements.define('bv-orbs', class extends HTMLElement {
     matA.uniforms.iOffsetX.value = Number.isFinite(parsed) ? parsed : 0;
     this._setOffset = (v) => {
       if (Number.isFinite(v)) matA.uniforms.iOffsetX.value = v;
+    };
+
+    /* Rayon de l'orbite. L'amener a 0 fait converger les huit orbes vers le
+       centre ; la passe de retroaction garde leurs trainees, qui s'enroulent en
+       spirale derriere le sigle. C'est ce que la page joue a l'ouverture de
+       session, plutot qu'un anneau qui tourne autour du logo. */
+    let anim = null;
+    // Pas 0 : huit orbes exactement superposees donnent un point fige. Un rayon
+    // residuel garde un vortex serre qui tourne encore -- ca continue de dire
+    // « ca travaille » pendant l'attente.
+    this.converge = (ms = 1100) => this._ramp(0.018, ms);
+    this.expand = (ms = 600) => this._ramp(BASE_RADIUS, ms);
+    this._ramp = (target, ms) => {
+      if (anim) cancelAnimationFrame(anim);
+      const from = matA.uniforms.iRadius.value;
+      const t0 = performance.now();
+      const step = (now) => {
+        const k = Math.min(1, (now - t0) / ms);
+        // Deceleration forte : le gros du trajet est fait tot, la fin se pose.
+        const e = 1 - Math.pow(1 - k, 3);
+        matA.uniforms.iRadius.value = from + (target - from) * e;
+        if (k < 1) anim = requestAnimationFrame(step);
+      };
+      anim = requestAnimationFrame(step);
     };
 
     const resize = () => {

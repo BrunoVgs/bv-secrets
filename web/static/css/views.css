@@ -166,8 +166,12 @@ details.leg[open]>summary::before{transform:rotate(90deg)}
 .loginbox button.btn{animation:bv-boot-rest .7s var(--ease-out) .46s both}
 
 /* Chargement : les champs s'effacent, le sigle et ses anneaux tiennent l'ecran. */
+/* `animation:none` d'abord. L'animation d'ouverture est posee en `both`, donc
+   elle continue d'imposer sa derniere image (opacity:1) et gagnait contre cet
+   effacement : le champ et le bouton restaient affiches pendant l'attente. */
 .loginbox.pending .field,
-.loginbox.pending button{opacity:0;transform:translateY(6px);pointer-events:none;
+.loginbox.pending button{animation:none;opacity:0;transform:translateY(6px);
+  pointer-events:none;
   transition:opacity var(--t-mid) var(--ease-out),transform var(--t-mid) var(--ease-out)}
 
 @media(max-width:520px){

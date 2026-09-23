@@ -1,10 +1,15 @@
 /* Page de login : second verrou applicatif devant le dashboard.
 
-   Au succès on ne recharge pas immédiatement : les champs s'effacent, les
-   anneaux tournent autour du logo, et le dashboard se charge dans une iframe
-   hors écran. Le cache est donc chaud au moment du rechargement, ce qui évite
-   l'écran vide puis le re-rendu. */
+   Pendant l'attente, les huit orbes du fond CONVERGENT vers le centre en
+   laissant leurs traînées s'enrouler derrière le sigle. L'effet d'attente est
+   donc le décor lui-même, pas un anneau posé par-dessus.
+
+   Au succès on ne recharge pas immédiatement : le dashboard se charge dans une
+   iframe hors écran, donc le cache est chaud au moment du rechargement, ce qui
+   évite l'écran vide puis le re-rendu. Un échec renvoie les orbes sur leur
+   orbite : le décor revient exactement à son état d'avant. */
 const form = document.getElementById("loginForm");
+const fx = document.getElementById("loginfx");
 const pw = document.getElementById("pw");
 const err = document.getElementById("loginErr");
 
@@ -47,6 +52,9 @@ form.onsubmit = async (ev) => {
   ev.preventDefault();
   err.textContent = "";
   form.classList.add("pending");
+  // `?.` : sans WebGL (ou CDN injoignable) le composant reste vide et n'expose
+  // aucune methode. La page doit rester utilisable sans le decor.
+  fx?.converge?.();
 
   const held = sleep(HOLD_MS);
   let response;
@@ -59,6 +67,7 @@ form.onsubmit = async (ev) => {
   } catch {
     await held;
     form.classList.remove("pending");
+    fx?.expand?.();
     fail("réseau indisponible");
     return;
   }
@@ -66,6 +75,7 @@ form.onsubmit = async (ev) => {
   if (!response.ok) {
     await held;
     form.classList.remove("pending");
+    fx?.expand?.();
     fail("Mot de passe incorrect");
     return;
   }

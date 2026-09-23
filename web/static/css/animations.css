@@ -140,8 +140,10 @@ details.leg[open] .legcol:nth-child(4){animation-delay:.19s}
   0%,100%{filter:drop-shadow(0 6px 22px rgba(192,36,44,.34))}
   50%{filter:drop-shadow(0 6px 34px rgba(192,36,44,.62))}}
 
-.loginbox.pending .ring{opacity:1;animation:bv-ring .95s cubic-bezier(.5,.15,.4,.9) infinite}
-.loginbox.pending .ring2{opacity:1;animation:bv-ring 1.7s linear infinite reverse}
+/* Pendant l'attente, les anneaux s'EFFACENT : ce sont les orbes du fond qui
+   convergent, et deux mouvements concentriques en meme temps se disputeraient
+   le regard au lieu de se completer. */
+.loginbox.pending .ring,.loginbox.pending .ring2{opacity:0}
 /* `animation:none` d'abord : une animation en cours bat une declaration
    normale, donc sans ca la respiration de veille ecrasait ce halo et l'etat
    « chargement » ne se voyait plus sur le sigle. */
