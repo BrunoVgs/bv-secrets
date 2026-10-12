@@ -298,14 +298,19 @@ def cmd_get(a, e):
 
 
 def cmd_set(a, e):
+    # `-` : la valeur arrive sur l'entree standard, donc ni dans `ps` ni dans
+    # l'historique du shell.
+    value = sys.stdin.read().rstrip("\r\n") if a.value == "-" else a.value
+    if not value:
+        raise ConfigError(f"{a.key}: valeur vide")
     c = e.cfg.get(a.key)
     if c and c["validate"]:
-        err = validate.check(c["validate"], a.value)
+        err = validate.check(c["validate"], value)
         if err:
             raise ConfigError(f"{a.key}: {err}")
     target = LOCAL if a.local else MASTER
     data = parse_env(target)
-    data[a.key] = a.value
+    data[a.key] = value
     write_env(target, data)
     Engine.touch_meta([a.key])
     print(f"set {a.key} dans {target.name} ; lancer `bv-secrets apply` pour propager.")
@@ -853,7 +858,7 @@ def build_parser():
     add("push", "envoie la valeur courante d'un secret à l'instance qui l'héberge",
         cmd_push, only)
     add("get", "imprime une valeur (scripting)", cmd_get, (("key",), {}))
-    add("set", "écrit une valeur", cmd_set,
+    add("set", "écrit une valeur (`-` : lue sur l'entrée standard)", cmd_set,
         (("key",), {}), (("value",), {}), (("--local",), {"action": "store_true"}))
     add("gen", "génère une valeur pour une clé", cmd_gen, (("key",), {}),
         (("--kind",), {"choices": sorted(GEN_KINDS), "default": "password"}),

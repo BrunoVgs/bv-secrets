@@ -229,6 +229,30 @@ class TestBracesThatAreNotSecrets(CLITestCase):
         self.assertIn("1 ok, 0 KO", r.stdout, r.stdout + r.stderr)
 
 
+class TestSetReadsStdin(CLITestCase):
+    """Une valeur passee en argument se lit dans `ps` le temps de la commande, et
+    reste dans l'historique du shell. `-` la prend sur l'entree standard."""
+
+    def setUp(self):
+        super().setUp()
+        self.conf.write_text("[APP_SECRET]\nkind = password\nsinks =\n    file:" + str(self.base / "s.txt") + "\n")
+
+    def pipe(self, text):
+        env = {**os.environ, "PYTHONPATH": str(ROOT), "BV_SECRETS_DIR": str(self.store),
+               "BV_SECRETS_CONF": str(self.conf), "NO_COLOR": "1"}
+        return subprocess.run([sys.executable, "-m", "bvsecrets.cli", "set", "APP_SECRET", "-"],
+                              env=env, input=text, capture_output=True, text=True)
+
+    def test_dash_takes_the_value_from_stdin_without_its_newline(self):
+        r = self.pipe("venue-par-un-tube\n")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(self.master()["APP_SECRET"], "venue-par-un-tube")
+
+    def test_an_empty_stdin_is_refused_rather_than_stored(self):
+        self.assertNotEqual(self.pipe("\n").returncode, 0)
+        self.assertFalse((self.store / "bv-secrets.env").exists() and "APP_SECRET" in self.master())
+
+
 class TestValidatorsRefuseATrailingNewline(unittest.TestCase):
     def test_no_name_pattern_accepts_a_newline_at_the_end(self):
         from bvsecrets import adopt, hosts
