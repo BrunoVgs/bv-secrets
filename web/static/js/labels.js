@@ -1,11 +1,10 @@
 /* Labels and contextual help — one place to fix the vocabulary. */
 
-export const GRP_COLOR = { auto: "#3fbf5f", app: "#d9a13b", careful: "#d63a42", manual: "#8b8b8b" };
-export const GRP_LABEL = { auto: "auto", app: "si nommé", careful: "si nommé ⚠", manual: "jamais" };
+export const GRP_COLOR = { auto: "#3fbf5f", app: "#d9a13b", manual: "#8b8b8b" };
+export const GRP_LABEL = { auto: "auto", app: "si nommé", manual: "jamais" };
 export const GRP_HELP = {
   auto: "rotée par « Roter le groupe auto »",
   app: "rotée seulement si elle est ciblée",
-  careful: "rotée seulement si elle est ciblée — impactant",
   manual: "jamais rotée automatiquement",
 };
 

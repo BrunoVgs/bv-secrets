@@ -8,7 +8,7 @@
 import { $, $$ } from "./dom.js";
 import { OBJ_ORDER } from "./labels.js";
 
-const GRP_RANK = { auto: 0, app: 1, careful: 2, manual: 3 };
+const GRP_RANK = { auto: 0, app: 1, manual: 2 };
 
 export const SORT = {
   coffre: [{ key: "name", dir: 1 }],

@@ -418,7 +418,7 @@ built on. One declaration, several enforcers.
 
 - `kind` is the FORMAT: `password`, `hex`, `b64`, `passphrase`, `userpass`,
   `opaque`, `computed`, `apikey`.
-- `group` is the rotation POLICY: `auto`, `app`, `careful`, `manual`.
+- `group` is the rotation POLICY: `auto`, `app`, `manual`.
 
 An `apikey` is issued by someone else's app, so it is never generated; the name rule
 (`API`/`TOKEN`) makes turning it into a generatable kind fail in the UI, the API and

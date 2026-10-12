@@ -254,7 +254,7 @@
 <h3>Concepts</h3>
 <dl>
 <dt>sinks</dt><dd><span class=k>env:svc#VAR</span> (fichier .env par service) · <span class=k>file:/chemin</span> · <span class=k>mysql:user@conteneur</span> (ALTER USER) · <span class=k>cmd:…</span> (<span class=k>{value}</span> = nouvelle valeur, <span class=k>{AUTRE}</span> = autre secret).</dd>
-<dt>groupes</dt><dd><span class=k>auto</span> = roté par défaut · <span class=k>app</span> / <span class=k>careful</span> = roté explicitement · <span class=k>manual</span> = jamais généré (posé à la main).</dd>
+<dt>groupes</dt><dd><span class=k>auto</span> = roté par défaut · <span class=k>app</span> = roté explicitement · <span class=k>manual</span> = jamais généré (posé à la main).</dd>
 <dt>computed</dt><dd>Secret dérivé d'autres (ex. <span class=k>AUTHSF_DATABASE_URL</span>, qui contient <span class=k>MARIADB_APP_PASSWORD</span>) — se recalcule tout seul.</dd>
 <dt>recréation</dt><dd>Un conteneur ne relit son <span class=k>env_file</span> qu'à la création : tout service ciblé par un sink <span class=k>env:</span> est donc <b>recréé</b> après application. Déduit des sinks, jamais déclaré à la main.</dd>
 <dt>probe</dt><dd>Commande de vérification déclarée par secret (<span class=k>doctor</span>) : teste la valeur contre la vraie app, exit 0 = ✓. Jamais destructif, n'affiche aucune valeur.</dd>
