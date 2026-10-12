@@ -25,22 +25,33 @@ from .config import looks_like_apikey
 
 # Names are read by segment (DB_PASSWORD -> {DB, PASSWORD}) so a substring doesn't
 # fool detection (MONKEY doesn't contain the "KEY" token).
-_SECRET_TOKENS = {"PASS", "PASSWORD", "PWD", "SECRET", "TOKEN", "APIKEY", "KEY",
+_SECRET_TOKENS = {"PASS", "PASSWORD", "PWD", "PW", "SECRET", "TOKEN", "APIKEY", "KEY",
                   "CREDENTIAL", "CREDENTIALS", "AUTH", "SALT", "SEED", "PRIVATE", "DSN"}
 _CONFIG_TOKENS = {"HOST", "HOSTNAME", "PORT", "URL", "URI", "PATH", "DIR", "NAME",
                   "USER", "USERNAME", "ENABLE", "ENABLED", "DEBUG", "LEVEL", "LOG",
                   "TZ", "LANG", "LOCALE", "MODE", "ENV", "VERSION", "TIMEOUT", "REGION"}
 
+# Le DERNIER mot dit ce que la cle est ; ceux d'avant la qualifient. AUTH_USERNAME
+# est un nom de compte, pas un secret, meme si AUTH figure dedans.
+_IDENTITY_WORDS = {"USER", "USERNAME", "LOGIN", "NAME", "HOST", "HOSTNAME", "PORT"}
+# Une cle de chiffrement ne se rote pas : la changer rend illisible tout ce
+# qu'elle a chiffre. Seul un humain peut decider de le faire.
+_NEVER_ROTATE = {"ENCRYPTION", "ENCRYPT", "MASTER"}
+
 Proposal = namedtuple("Proposal", "key name kind group value")
 
 
-def _tokens(name):
-    """-> les mots du nom. Le camelCase est coupe aussi : c'est la convention des
-    fichiers toml/json/yaml, et sans ca `sessionSecret` ne rendait qu'un seul mot
-    (SESSIONSECRET) qui ne matchait rien -- il n'etait detecte que par accident,
-    parce que sa valeur etait longue."""
+def _words(name):
+    """-> les mots du nom, dans l'ordre. Le camelCase est coupe aussi : c'est la
+    convention des fichiers toml/json/yaml, et sans ca `sessionSecret` ne rendait
+    qu'un seul mot (SESSIONSECRET) qui ne matchait rien -- il n'etait detecte que
+    par accident, parce que sa valeur etait longue."""
     spaced = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", name)
-    return set(re.split(r"[_\-.]+", spaced.upper()))
+    return [w for w in re.split(r"[_\-.]+", spaced.upper()) if w]
+
+
+def _tokens(name):
+    return set(_words(name))
 
 
 def _embeds_credentials(value):
@@ -49,10 +60,13 @@ def _embeds_credentials(value):
 
 
 def looks_secret(name, value):
-    tokens = _tokens(name)
-    if tokens & _SECRET_TOKENS:
-        return True
+    words = _words(name)
+    tokens = set(words)
     if _embeds_credentials(value):
+        return True
+    if words and words[-1] in _IDENTITY_WORDS:
+        return False
+    if tokens & _SECRET_TOKENS:
         return True
     if tokens & _CONFIG_TOKENS:
         return False
@@ -71,11 +85,19 @@ def guess_kind(name, value):
     return "password"
 
 
-def default_group(kind):
+def default_group(kind, name=""):
     # an app-issued key is never generatable -> manual; everything else -> `app`
     # (rotated only if targeted), never `auto`: don't pull a third-party secret into
     # automatic rotation before a human confirms it's safe.
-    return "manual" if kind == "apikey" else "app"
+    if kind == "apikey" or _tokens(name) & _NEVER_ROTATE:
+        return "manual"
+    return "app"
+
+
+def _named(prefix, base):
+    """Le prefixe sert a distinguer deux apps qui ont la meme cle ; une cle qui le
+    porte deja n'a pas a le recevoir deux fois (N8N_N8N_ENCRYPTION_KEY)."""
+    return base if not prefix or base.startswith(prefix) else f"{prefix}{base}"
 
 
 def plan_envfile(path, prefix="", known=frozenset()):
@@ -89,12 +111,12 @@ def plan_envfile(path, prefix="", known=frozenset()):
         if not looks_secret(key, value):
             ignored.append(key)
             continue
-        name = f"{prefix}{key}" if prefix else key
+        name = _named(prefix, key)
         if name in known:
             conflicts.append(name)
             continue
         kind = guess_kind(key, value)
-        proposals.append(Proposal(key, name, kind, default_group(kind), value or ""))
+        proposals.append(Proposal(key, name, kind, default_group(kind, key), value or ""))
     return proposals, ignored, conflicts
 
 
@@ -198,10 +220,10 @@ def plan_file(path, prefix="", known=frozenset()):
         # Le nom du secret ne peut pas porter de point : on remonte le chemin en
         # majuscules, ce qui donne aussi un nom lisible (DB_PASSWORD, pas db.password).
         base = re.sub(r"[^A-Za-z0-9]+", "_", key).strip("_").upper()
-        name = f"{prefix}{base}" if prefix else base
+        name = _named(prefix, base)
         if name in known:
             conflicts.append(name)
             continue
         kind = guess_kind(key, value)
-        proposals.append(Proposal(key, name, kind, default_group(kind), value or ""))
+        proposals.append(Proposal(key, name, kind, default_group(kind, key), value or ""))
     return proposals, ignored, conflicts

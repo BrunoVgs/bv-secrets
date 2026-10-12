@@ -285,3 +285,32 @@ class TestCamelCaseNamesAreRead(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestAdoptReadsNamesTheWayPeopleWriteThem(unittest.TestCase):
+    def test_a_pw_suffix_is_a_password(self):
+        from bvsecrets.adopt import looks_secret
+        self.assertTrue(looks_secret("NEKO_USER_PW", "court"))
+        self.assertTrue(looks_secret("NEKO_ADMIN_PW", "court"))
+
+    def test_an_account_name_is_not_a_secret_even_next_to_auth(self):
+        from bvsecrets.adopt import looks_secret
+        self.assertFalse(looks_secret("DASHBOARD_BASIC_AUTH_USERNAME", "bv"))
+        self.assertTrue(looks_secret("DASHBOARD_BASIC_AUTH_PASSWORD", "x"))
+        self.assertTrue(looks_secret("DATABASE_URL", "postgres://u:motdepasse@db/app"))
+
+    def test_an_encryption_key_is_never_proposed_for_rotation(self):
+        from bvsecrets.adopt import default_group
+        self.assertEqual(default_group("hex", "N8N_ENCRYPTION_KEY"), "manual")
+        self.assertEqual(default_group("hex", "APP_SECRET"), "app")
+
+    def test_a_prefix_already_carried_is_not_added_twice(self):
+        import tempfile
+        from bvsecrets import adopt
+        with tempfile.TemporaryDirectory() as tmp:
+            env = Path(tmp) / ".env"
+            env.write_text("N8N_ENCRYPTION_KEY=" + "a1" * 32 + "\nPOSTGRES_PASSWORD=unmotdepasse\n")
+            proposals, _, _ = adopt.plan_file(env, prefix="N8N_")
+        self.assertEqual(sorted(p.name for p in proposals),
+                         ["N8N_ENCRYPTION_KEY", "N8N_POSTGRES_PASSWORD"])
+        self.assertEqual({p.name: p.group for p in proposals}["N8N_ENCRYPTION_KEY"], "manual")
