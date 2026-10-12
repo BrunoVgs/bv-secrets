@@ -319,6 +319,22 @@ def load(path=None) -> dict:
 # Ecriture
 # --------------------------------------------------------------------------- #
 
+def _written(value: str, item=False) -> str:
+    """Une valeur ecrite pour etre RELUE a l'identique : telle quelle si le
+    lecteur la rend inchangee, entre guillemets sinon. C'est le lecteur lui-meme
+    qui tranche, pas une liste de caracteres a risque (`#`, `{`, `[`, `"`...) :
+    une liste finit toujours par en oublier un."""
+    quoted = '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    for form in (value, quoted):
+        text = f"secrets:\n  X:\n    k:\n      - {form}" if item else f"secrets:\n  X:\n    k: {form}"
+        try:
+            if parse(text)["secrets"]["X"].get("k") == ([value] if item else value):
+                return form
+        except (ConfigError, KeyError):
+            pass
+    raise ConfigError(f"valeur impossible à écrire sans ambiguïté : {value!r}")
+
+
 def render_section(name, kind, group, sinks, length=0, note="", validate="",
                    template="", indent="  ", host="") -> str:
     """Un bloc `NOM:` pret a inserer sous `secrets:`, indentation comprise."""
@@ -327,20 +343,20 @@ def render_section(name, kind, group, sinks, length=0, note="", validate="",
     if template:
         out.append(f"{f}<<: *{template}")
     else:
-        out.append(f"{f}kind: {kind}")
+        out.append(f"{f}kind: {_written(kind)}")
         if group != normalize_group("", kind):
-            out.append(f"{f}group: {group}")
+            out.append(f"{f}group: {_written(group)}")
     if length:
         out.append(f"{f}length: {length}")
     if host:
-        out.append(f"{f}host: {host}")
+        out.append(f"{f}host: {_written(host)}")
     if sinks:
         out.append(f"{f}sinks:")
-        out += [f"{f}{indent}- {s}" for s in sinks]
+        out += [f"{f}{indent}- {_written(s, item=True)}" for s in sinks]
     if validate:
-        out.append(f"{f}validate: {validate}")
+        out.append(f"{f}validate: {_written(validate)}")
     if note:
-        out.append(f"{f}note: {note}")
+        out.append(f"{f}note: {_written(note)}")
     return "\n".join(out)
 
 

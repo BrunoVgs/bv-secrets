@@ -234,5 +234,20 @@ class TestWriter(unittest.TestCase):
             self.assertEqual(sorted(conf_yaml.load(p)), ["A"])
 
 
+class TestWrittenValuesReadBackUnchanged(unittest.TestCase):
+    """Une note recopiee d'une autre instance peut contenir `#`, `{`, `[`, des
+    guillemets. Ecrite telle quelle, le lecteur la tronquait ou la lisait comme
+    une liste : ce qui est ecrit doit se relire a l'identique."""
+
+    def test_awkward_scalars_and_sinks_round_trip(self):
+        notes = ["simple", "avant # apres", "{kind: manual}", "[a, b]", 'dit "oui" \\ non', "'cite'", "*ancre", "- tiret"]
+        sink = "cmd: echo \"x\" # fin"
+        for note in notes:
+            block = conf_yaml.render_section("APP_SECRET", "password", "app", [sink], note=note, host="vps1")
+            read = conf_yaml.parse("secrets:\n" + block)["secrets"]["APP_SECRET"]
+            self.assertEqual((read["note"], read["sinks"], read["kind"], read["host"]),
+                             (note, [sink], "password", "vps1"), block)
+
+
 if __name__ == "__main__":
     unittest.main()

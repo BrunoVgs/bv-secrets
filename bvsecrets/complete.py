@@ -17,8 +17,8 @@ def _secrets():
         cfg = Engine().cfg
     except Exception:
         return {}
-    return {name: c["kind"] + (f" @{c['host']}" if c.get("host") else "")
-            + (f" — {one_line(c['note'])}" if c.get("note") else "") for name, c in sorted(cfg.items())}
+    return {name: one_line(c["kind"] + (f" @{c['host']}" if c.get("host") else "")
+                           + (f" — {c['note']}" if c.get("note") else "")) for name, c in sorted(cfg.items())}
 
 
 def _service_names():
@@ -32,7 +32,7 @@ def _service_names():
 def _host_names():
     from . import hosts
     try:
-        return {name: one_line(entry["note"]) or entry["url"] for name, entry in hosts.entries().items()}
+        return {name: one_line(entry["note"] or entry["url"]) for name, entry in hosts.entries().items()}
     except Exception:
         return {}
 
