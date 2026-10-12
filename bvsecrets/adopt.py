@@ -59,19 +59,27 @@ def _embeds_credentials(value):
     return bool(re.search(r"://[^/\s:@]+:[^/\s@]+@", value or ""))
 
 
+def _looks_random(value):
+    return bool(value) and len(value) >= 24 and len(set(value)) >= 10
+
+
 def looks_secret(name, value):
     words = _words(name)
     tokens = set(words)
     if _embeds_credentials(value):
         return True
-    if words and words[-1] in _IDENTITY_WORDS:
+    # Un nom de compte n'est pas un secret -- mais le nom seul ne suffit pas a
+    # l'ecarter : une valeur longue et variee sous AUTH_USER reste proposee. Dans
+    # le doute on propose, la revue tranche ; l'inverse laisserait un secret
+    # hors du coffre sans que personne l'ait decide.
+    if words and words[-1] in _IDENTITY_WORDS and not _looks_random(value):
         return False
     if tokens & _SECRET_TOKENS:
         return True
     if tokens & _CONFIG_TOKENS:
         return False
     # no telltale name, no known config: a long, varied value is suspect
-    return bool(value) and len(value) >= 24 and len(set(value)) >= 10
+    return _looks_random(value)
 
 
 def guess_kind(name, value):
@@ -94,30 +102,29 @@ def default_group(kind, name=""):
     return "app"
 
 
-def _named(prefix, base):
-    """Le prefixe sert a distinguer deux apps qui ont la meme cle ; une cle qui le
-    porte deja n'a pas a le recevoir deux fois (N8N_N8N_ENCRYPTION_KEY)."""
-    return base if not prefix or base.startswith(prefix) else f"{prefix}{base}"
+def _names(prefix, bases):
+    """base -> nom du secret. Le prefixe sert a distinguer deux apps qui ont la
+    meme cle ; une cle qui le porte deja n'a pas a le recevoir deux fois
+    (N8N_N8N_ENCRYPTION_KEY). Sauf quand deux cles du meme fichier finiraient
+    sous un seul nom (`N8N_KEY` et `KEY`) : celles-la gardent le prefixe entier,
+    sinon l'une ecraserait l'autre en silence."""
+    short = {b: b if not prefix or b.startswith(prefix) else f"{prefix}{b}" for b in bases}
+    seen = list(short.values())
+    return {b: short[b] if seen.count(short[b]) == 1 else f"{prefix}{b}" for b in bases}
 
 
-def plan_envfile(path, prefix="", known=frozenset()):
-    """-> (proposals, ignored, conflicts) for a .env file.
-
-    proposals: secrets to declare; ignored: keys judged non-secret;
-    conflicts: names already taken in secrets.conf (need a prefix)."""
-    proposals, ignored, conflicts = [], [], []
-    for key in locations.env_keys(str(path)):
-        value = locations.read_location(f"envfile:{path}#{key}")
-        if not looks_secret(key, value):
-            ignored.append(key)
-            continue
-        name = _named(prefix, key)
+def _plan(found, prefix, known):
+    """found = [(cle dans le fichier, base du nom, valeur)] deja juges secrets."""
+    names = _names(prefix, [base for _, base, _ in found])
+    proposals, conflicts = [], []
+    for key, base, value in found:
+        name = names[base]
         if name in known:
             conflicts.append(name)
             continue
         kind = guess_kind(key, value)
         proposals.append(Proposal(key, name, kind, default_group(kind, key), value or ""))
-    return proposals, ignored, conflicts
+    return proposals, conflicts
 
 
 # Extension -> schema de sink. C'est le meme tableau qui decide comment enumerer
@@ -211,19 +218,13 @@ def entries(path):
 
 def plan_file(path, prefix="", known=frozenset()):
     """-> (proposals, ignored, conflicts) pour n'importe quel format supporte."""
-    scheme = scheme_for(path)
-    proposals, ignored, conflicts = [], [], []
+    found, ignored = [], []
     for key, value in entries(path):
         if not looks_secret(key, value):
             ignored.append(key)
             continue
         # Le nom du secret ne peut pas porter de point : on remonte le chemin en
         # majuscules, ce qui donne aussi un nom lisible (DB_PASSWORD, pas db.password).
-        base = re.sub(r"[^A-Za-z0-9]+", "_", key).strip("_").upper()
-        name = _named(prefix, base)
-        if name in known:
-            conflicts.append(name)
-            continue
-        kind = guess_kind(key, value)
-        proposals.append(Proposal(key, name, kind, default_group(kind, key), value or ""))
+        found.append((key, re.sub(r"[^A-Za-z0-9]+", "_", key).strip("_").upper(), value))
+    proposals, conflicts = _plan(found, prefix, known)
     return proposals, ignored, conflicts

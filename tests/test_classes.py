@@ -314,3 +314,17 @@ class TestAdoptReadsNamesTheWayPeopleWriteThem(unittest.TestCase):
         self.assertEqual(sorted(p.name for p in proposals),
                          ["N8N_ENCRYPTION_KEY", "N8N_POSTGRES_PASSWORD"])
         self.assertEqual({p.name: p.group for p in proposals}["N8N_ENCRYPTION_KEY"], "manual")
+
+    def test_a_long_random_value_is_proposed_even_under_an_account_name(self):
+        from bvsecrets.adopt import looks_secret
+        self.assertTrue(looks_secret("SERVICE_AUTH_USER", "k3Jd9sLq0PzX7vBn2MwR5tYh8UcA"))
+
+    def test_two_keys_of_one_file_never_end_under_one_name(self):
+        import tempfile
+        from bvsecrets import adopt
+        with tempfile.TemporaryDirectory() as tmp:
+            env = Path(tmp) / ".env"
+            env.write_text("N8N_SECRET=premiere-valeur\nSECRET=seconde-valeur\n")
+            proposals, _, _ = adopt.plan_file(env, prefix="N8N_")
+        self.assertEqual({p.name: p.key for p in proposals},
+                         {"N8N_N8N_SECRET": "N8N_SECRET", "N8N_SECRET": "SECRET"})
