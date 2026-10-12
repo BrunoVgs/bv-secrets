@@ -281,8 +281,8 @@ class TestNotesCarryNoControlCharacters(CLITestCase):
 
     def test_the_yaml_reader_drops_them_too(self):
         from bvsecrets import conf_yaml
-        entry = conf_yaml.entry_from({"kind": "password", "note": "compte \x1b[2Jadmin\x07"})
-        self.assertEqual(entry["note"], "compte [2Jadmin")
+        entry = conf_yaml.entry_from({"kind": "password", "note": "compte \x1b[2Jadmin\x07\nligne deux"})
+        self.assertEqual(entry["note"], "compte [2Jadmin\nligne deux")
 
 
 class TestSetReadsStdin(CLITestCase):

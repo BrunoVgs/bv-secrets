@@ -301,7 +301,7 @@ def cmd_get(a, e):
     # (compte, adresse). Terminal seulement, et sur stderr : jamais dans un tube.
     note = (e.cfg.get(a.key) or {}).get("note")
     if note and sys.stdout.isatty():
-        print(f"  ↳ {note}", file=sys.stderr)
+        print(f"  ↳ {' '.join(note.split())}", file=sys.stderr)
 
 
 def cmd_set(a, e):
