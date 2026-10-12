@@ -6,7 +6,7 @@ viennent de la config. Les deux shells appellent la commande cachee `__complete`
 """
 import argparse
 
-from .config import GEN_KINDS, GROUPS
+from .config import GEN_KINDS, GROUPS, one_line
 
 
 def _secrets():
@@ -18,7 +18,7 @@ def _secrets():
     except Exception:
         return {}
     return {name: c["kind"] + (f" @{c['host']}" if c.get("host") else "")
-            + (f" — {c['note']}" if c.get("note") else "") for name, c in sorted(cfg.items())}
+            + (f" — {one_line(c['note'])}" if c.get("note") else "") for name, c in sorted(cfg.items())}
 
 
 def _service_names():
@@ -32,7 +32,7 @@ def _service_names():
 def _host_names():
     from . import hosts
     try:
-        return {name: entry["note"] or entry["url"] for name, entry in hosts.entries().items()}
+        return {name: one_line(entry["note"]) or entry["url"] for name, entry in hosts.entries().items()}
     except Exception:
         return {}
 

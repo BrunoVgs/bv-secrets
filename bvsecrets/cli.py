@@ -11,7 +11,7 @@ import secrets as pysecrets
 
 from . import (adopt, audit, conf_yaml, conffile, elevation, host, hosts,
                remote, service, totp, ui, validate)
-from .config import (CONF, COMPOSE_DIR, CONFIG_FILE, GEN_KINDS, LEAKS_MAX_BYTES, is_identifier, KEYFILE,
+from .config import (CONF, COMPOSE_DIR, CONFIG_FILE, GEN_KINDS, LEAKS_MAX_BYTES, is_identifier, KEYFILE, one_line,
                      LOCAL, MASTER, MIRROR, PROJECT_DIR, RENDER_DIR, SECRETS_DIR,
                      OBJ_ORDER, is_yaml, looks_like_apikey, secret_object,
                      secret_rotation, META)
@@ -301,7 +301,7 @@ def cmd_get(a, e):
     # (compte, adresse). Terminal seulement, et sur stderr : jamais dans un tube.
     note = (e.cfg.get(a.key) or {}).get("note")
     if note and sys.stdout.isatty():
-        print(f"  ↳ {' '.join(note.split())}", file=sys.stderr)
+        print(f"  ↳ {one_line(note)}", file=sys.stderr)
 
 
 def cmd_set(a, e):

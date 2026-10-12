@@ -12,7 +12,7 @@ passent tous par ces trois fonctions, et aucun n'a a savoir dans quoi il ecrit.
 import os
 
 from . import conf_yaml
-from .config import CONF, is_yaml, normalize_group, plain
+from .config import CONF, ConfigError, is_yaml, normalize_group, one_line, plain
 
 
 def write_text(text: str) -> None:
@@ -33,6 +33,13 @@ def write_text(text: str) -> None:
 
 
 def render_section(name, kind, group, sinks, length=0, note="", validate="", host=""):
+    # Un champ peut venir d'ailleurs (inventaire d'une autre instance, tableau de
+    # bord). Chacun tient sur UNE ligne : un saut de ligne y ajouterait des cles a
+    # la declaration, un sink `cmd:` par exemple, que le worker executerait.
+    for field in (name, kind, group, validate, host, *sinks):
+        if field != one_line(field):
+            raise ConfigError(f"{one_line(name)}: saut de ligne ou caractère de contrôle dans la déclaration")
+    note = one_line(note)
     if is_yaml():
         return conf_yaml.render_section(name, kind, group, sinks, length, note, validate, host=host)
     block = [f"[{name}]", f"kind  = {kind}"]

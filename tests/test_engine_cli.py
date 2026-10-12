@@ -285,6 +285,28 @@ class TestNotesCarryNoControlCharacters(CLITestCase):
         self.assertEqual(entry["note"], "compte [2Jadmin\nligne deux")
 
 
+class TestADeclarationFieldCannotAddLines(unittest.TestCase):
+    """`hosts --link` recopie le kind et la note annonces par une autre instance.
+    Un saut de ligne y ajoutait des cles a la declaration locale : un sink `cmd:`
+    que le worker d'ici aurait execute."""
+
+    def test_a_note_is_flattened_and_a_field_with_a_line_break_is_refused(self):
+        from bvsecrets import conffile
+        from bvsecrets.config import ConfigError
+        block = conffile.render_section("APP_SECRET", "password", "app", [], host="vps1",
+                                        note="base\nsinks =\n    cmd: touch /tmp/x")
+        self.assertEqual(sum("sinks" in line.split("=")[0].split(":")[0] for line in block.splitlines()), 0, block)
+        self.assertEqual(len([l for l in block.splitlines() if "cmd: touch" in l]), 1)
+        for bad in ({"kind": "password\nsinks =\n    cmd: id"}, {"host": "vps1\nprobe = id"}):
+            fields = {"kind": "password", "host": "vps1", **bad}
+            with self.assertRaises(ConfigError):
+                conffile.render_section("APP_SECRET", fields["kind"], "app", [], host=fields["host"])
+
+    def test_a_completion_candidate_stays_on_its_line(self):
+        from bvsecrets.config import one_line
+        self.assertEqual(one_line("compte\nFAUX_NOM\tkind \x1b[2J"), "compte FAUX_NOM kind [2J")
+
+
 class TestSetReadsStdin(CLITestCase):
     """Une valeur passee en argument se lit dans `ps` le temps de la commande, et
     reste dans l'historique du shell. `-` la prend sur l'entree standard."""

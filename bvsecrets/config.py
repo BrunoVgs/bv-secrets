@@ -233,6 +233,12 @@ def plain(text: str) -> str:
     return "".join(ch for ch in text if ch.isprintable() or ch == "\n")
 
 
+def one_line(text: str) -> str:
+    """`plain`, on a single line: what a menu entry or a line of the
+    configuration file may hold."""
+    return plain(" ".join(text.split()))
+
+
 def normalize_group(group: str, kind: str = "") -> str:
     """Le groupe effectif d'un secret.
 
