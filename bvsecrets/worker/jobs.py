@@ -364,7 +364,7 @@ def do_host_deploy(job, log):
     do_host_set(job, log)
     name = str(job.get("name", "")).strip()
     hosts.deploy(name, str(job.get("ssh", "")).strip(), log)
-    state = remote.probe(name)
+    state = remote.probe_when_up(name)
     log(f"{name}: {state['state']} — {state.get('detail', '')}")
     if state["state"] != "ok":
         raise RuntimeError(f"{name}: installée mais ne répond pas encore correctement")

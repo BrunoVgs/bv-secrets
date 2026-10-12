@@ -106,6 +106,17 @@ def probe(host: str) -> dict:
             "actions": info.get("actions") or []}
 
 
+def probe_when_up(host: str, seconds: int = 30) -> dict:
+    """`probe`, en laissant a un worker qu'on vient de relancer le temps d'ouvrir
+    son ecouteur : juste apres un envoi, « connexion refusee » n'est pas une panne."""
+    deadline = time.time() + seconds
+    while True:
+        state = probe(host)
+        if state["state"] != "unreachable" or time.time() >= deadline:
+            return state
+        time.sleep(POLL_SECONDS)
+
+
 def inventory(host: str) -> dict:
     """La fiche de l'hote : sa machine et ses secrets declares, sans valeur."""
     try:

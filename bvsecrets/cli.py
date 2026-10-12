@@ -16,7 +16,7 @@ from .config import (CONF, COMPOSE_DIR, CONFIG_FILE, GEN_KINDS, LEAKS_MAX_BYTES,
                      OBJ_ORDER, is_yaml, looks_like_apikey, secret_object,
                      secret_rotation, META)
 from .engine import ConfigError, Engine, RotateAborted
-from .worker import confedit
+from .worker import confedit, jobs
 from .envfile import parse_env, write_env
 
 
@@ -225,10 +225,22 @@ def cmd_hosts(a, e):
             a.key = "-"
     if a.deploy:
         hosts.deploy(a.name, a.deploy, _log)
-        a.test = True
+        state = remote.probe_when_up(a.name)
+        print(f"{a.name}: {state['state']} — {state['detail']}")
+        return
     elif a.note and a.name and not a.url:
         hosts.save(a.name, hosts.url(a.name), a.note)
         print(f"{a.name}: note mise à jour.")
+        return
+    if a.link:
+        wanted = [n.strip() for n in a.link.split(",") if n.strip()]
+        if wanted == ["all"]:
+            wanted = [s["name"] for s in remote.inventory(a.name).get("secrets") or []
+                      if s["name"] not in e.cfg and s["kind"] != "computed"]
+        if not wanted:
+            print(f"{a.name}: rien de plus à piloter d'ici.")
+            return
+        jobs.do_host_link({"host": a.name, "secrets": wanted}, _log)
         return
     if a.info:
         return _host_info(a.name, e)
@@ -826,6 +838,9 @@ def build_parser():
         (("--url",), {"default": "", "help": "ajouter ou modifier l'instance <name>"}),
         (("--note",), {"default": "", "help": "note libre sur l'instance"}),
         (("--info",), {"action": "store_true", "help": "la machine et ses secrets, lus chez elle"}),
+        (("--link",), {"default": "", "metavar": "NOMS",
+                       "help": "piloter d'ici des secrets de l'instance (noms séparés par "
+                               "des virgules, ou `all`)"}),
         (("--remove",), {"action": "store_true", "help": "retirer l'instance <name> et sa clé"}),
         (("--deploy",), {"default": "", "metavar": "CIBLE_SSH",
                          "help": "installer ou mettre à jour l'instance <name> sur sa machine, par ssh"}),

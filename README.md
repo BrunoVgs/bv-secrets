@@ -149,7 +149,8 @@ bv-secrets hosts xeon --url http://10.8.0.4:8765     # register it, generate its
 bv-secrets hosts xeon --deploy bv@10.8.0.4           # install or update it over ssh
 bv-secrets hosts --test                              # reachable? clock? key?
 bv-secrets hosts xeon --info                         # the machine, and its secrets
-bv-secrets add QBITTORRENT_PASSWORD --host xeon      # drive one of its secrets from here
+bv-secrets hosts xeon --link all                     # drive from here what it already declares
+bv-secrets add QBITTORRENT_PASSWORD --host xeon      # or declare one by hand
 bv-secrets push                                      # send the current values
 ```
 

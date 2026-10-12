@@ -48,6 +48,11 @@ fi
 ( umask 077; mkdir -p "$STORE/hosts"; printf '%s\n' "$KEY" > "$STORE/hosts/self.key" )
 echo "store : $STORE, clé partagée posée"
 
+# La commande dans le PATH du compte, et sa completion pour zsh.
+mkdir -p "$HOME/.local/bin" "$HOME/.zsh/completions"
+ln -sf "$DIR/bin/bv-secrets" "$HOME/.local/bin/bv-secrets"
+bin/bv-secrets completion zsh > "$HOME/.zsh/completions/_bv-secrets"
+
 if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
     INIT=systemd UNITE=/etc/systemd/system/bvsecrets-worker.service REGLAGES=/etc/default/bvsecrets-worker
 elif command -v rc-service >/dev/null 2>&1; then
