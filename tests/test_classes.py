@@ -352,3 +352,9 @@ class TestAdoptReadsNamesTheWayPeopleWriteThem(unittest.TestCase):
             for mauvais in ("X:\n  kind: hex\n  ", "n8n_", "A B", "9X_"):
                 with self.assertRaises(adopt.ConfigError):
                     adopt.plan_file(env, prefix=mauvais)
+
+    def test_a_key_another_secret_already_writes_is_recognised(self):
+        from bvsecrets import adopt
+        cfg = {"DEJA": {"sinks": ["envfile:/srv/app/.env#PASSWORD", "cmd: restart"]},
+               "AILLEURS": {"sinks": ["envfile:/srv/autre/.env#TOKEN"]}}
+        self.assertEqual(adopt.managed_keys("/srv/app/.env", cfg), {"PASSWORD"})

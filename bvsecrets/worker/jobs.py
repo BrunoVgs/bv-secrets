@@ -258,7 +258,10 @@ def do_adopt_plan(job, log):
     engine = Engine()
     proposals, ignored, conflicts = adopt.plan_file(
         path, prefix=str(job.get("prefix") or ""), known=set(engine.cfg))
-    log(f"{path}: {len(proposals)} secret(s) détecté(s), {len(ignored)} ignoré(s)")
+    managed = adopt.managed_keys(path, engine.cfg)
+    proposals = [p for p in proposals if p.key not in managed]
+    log(f"{path}: {len(proposals)} secret(s) détecté(s), {len(ignored)} ignoré(s), "
+        f"{len(managed)} déjà géré(s)")
     return {
         "file": str(path),
         "proposals": [{"key": p.key, "name": p.name, "kind": p.kind,
@@ -277,7 +280,8 @@ def do_adopt(job, log):
         raise RuntimeError("aucune clé sélectionnée")
     proposals, _, _ = adopt.plan_file(
         path, prefix=str(job.get("prefix") or ""), known=set(engine.cfg))
-    chosen = [p for p in proposals if p.key in wanted]
+    managed = adopt.managed_keys(path, engine.cfg)
+    chosen = [p for p in proposals if p.key in wanted and p.key not in managed]
     missing = wanted - {p.key for p in chosen}
     if missing:
         raise RuntimeError(f"clés absentes du fichier ou déjà déclarées: {sorted(missing)}")

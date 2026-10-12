@@ -404,6 +404,8 @@ def cmd_adopt(a, e):
     if not path.is_file():
         raise ConfigError(f"fichier introuvable: {path}")
     proposals, ignored, conflicts = adopt.plan_file(path, prefix=a.prefix, known=set(e.cfg))
+    managed = adopt.managed_keys(path, e.cfg)
+    proposals = [p for p in proposals if p.key not in managed]
     if a.only:
         wanted = {k.strip() for k in a.only.split(",")}
         proposals = [p for p in proposals if p.key in wanted]
@@ -411,6 +413,8 @@ def cmd_adopt(a, e):
     print(f"Depuis {path} — {len(proposals)} secret(s) détecté(s) :")
     for p in proposals:
         print(f"  + {p.name:34} {p.kind:9} {p.group:7} <- {p.key} ({len(p.value)} c)")
+    if managed:
+        print(f"  ✓ déjà gérées : {', '.join(sorted(managed))}")
     if ignored:
         print(f"  · ignorés (config) : {', '.join(ignored)}")
     if conflicts:

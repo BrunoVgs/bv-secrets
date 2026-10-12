@@ -157,6 +157,14 @@ def sink_for(path, key, scheme=None):
     return f"{scheme or scheme_for(path)}:{path}#{key}"
 
 
+def managed_keys(path, cfg) -> set:
+    """Les cles de ce fichier qu'un secret deja declare ecrit. Les adopter une
+    seconde fois donnerait deux secrets pour une seule valeur, et le premier
+    qui tourne desynchroniserait l'autre."""
+    here = sink_for(path, "")
+    return {sink[len(here):] for c in cfg.values() for sink in c["sinks"] if sink.startswith(here)}
+
+
 def _flatten(obj, prefix=""):
     """Structure imbriquee -> [(chemin.pointe, valeur)] pour les seuls scalaires.
     Les listes sont ignorees : un sink designe une cle, pas un indice, et viser
