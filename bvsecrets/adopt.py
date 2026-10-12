@@ -21,7 +21,7 @@ from collections import namedtuple
 from pathlib import Path
 
 from . import locations
-from .config import looks_like_apikey
+from .config import ConfigError, looks_like_apikey
 
 # Names are read by segment (DB_PASSWORD -> {DB, PASSWORD}) so a substring doesn't
 # fool detection (MONKEY doesn't contain the "KEY" token).
@@ -102,25 +102,32 @@ def default_group(kind, name=""):
     return "app"
 
 
-def _names(prefix, bases):
-    """base -> nom du secret. Le prefixe sert a distinguer deux apps qui ont la
-    meme cle ; une cle qui le porte deja n'a pas a le recevoir deux fois
-    (N8N_N8N_ENCRYPTION_KEY). Sauf quand deux cles du meme fichier finiraient
-    sous un seul nom (`N8N_KEY` et `KEY`) : celles-la gardent le prefixe entier,
-    sinon l'une ecraserait l'autre en silence."""
-    short = {b: b if not prefix or b.startswith(prefix) else f"{prefix}{b}" for b in bases}
-    seen = list(short.values())
-    return {b: short[b] if seen.count(short[b]) == 1 else f"{prefix}{b}" for b in bases}
+_NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
 
 
 def _plan(found, prefix, known):
-    """found = [(cle dans le fichier, base du nom, valeur)] deja juges secrets."""
-    names = _names(prefix, [base for _, base, _ in found])
+    """found = [(cle dans le fichier, base du nom, valeur)] deja juges secrets.
+    -> (proposals, conflicts).
+
+    Le prefixe sert a distinguer deux apps qui ont la meme cle ; une cle qui le
+    porte deja n'a pas a le recevoir deux fois (N8N_N8N_ENCRYPTION_KEY). Mais
+    deux cles ne finissent JAMAIS sous un seul nom : la seconde declaration
+    masquerait la premiere en silence. Quand le nom court est demande deux fois
+    on revient au prefixe entier, et ce qui se chevauche encore part en conflit,
+    a regler par l'humain."""
+    if prefix and not _NAME_RE.match(prefix):
+        # Le prefixe finit dans un nom de section de secrets.conf : rien d'autre
+        # que ce qu'un nom de secret accepte ne doit pouvoir y entrer.
+        raise ConfigError(f"préfixe invalide: {prefix!r} (majuscules, chiffres et _)")
+    short = [base if not prefix or base.startswith(prefix) else f"{prefix}{base}"
+             for _, base, _ in found]
+    names = [name if short.count(name) == 1 else f"{prefix}{base}"
+             for name, (_, base, _) in zip(short, found)]
     proposals, conflicts = [], []
-    for key, base, value in found:
-        name = names[base]
-        if name in known:
-            conflicts.append(name)
+    for name, (key, _, value) in zip(names, found):
+        if name in known or names.count(name) > 1 or not _NAME_RE.match(name):
+            if name not in conflicts:
+                conflicts.append(name)
             continue
         kind = guess_kind(key, value)
         proposals.append(Proposal(key, name, kind, default_group(kind, key), value or ""))

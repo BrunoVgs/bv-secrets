@@ -328,3 +328,27 @@ class TestAdoptReadsNamesTheWayPeopleWriteThem(unittest.TestCase):
             proposals, _, _ = adopt.plan_file(env, prefix="N8N_")
         self.assertEqual({p.name: p.key for p in proposals},
                          {"N8N_N8N_SECRET": "N8N_SECRET", "N8N_SECRET": "SECRET"})
+
+    def test_names_that_still_overlap_are_handed_back_as_conflicts(self):
+        import tempfile
+        from bvsecrets import adopt
+        with tempfile.TemporaryDirectory() as tmp:
+            env = Path(tmp) / ".env"
+            env.write_text("N8N_SECRET=aaaaaaaa\nSECRET=bbbbbbbb\nN8N_N8N_SECRET=cccccccc\n")
+            proposals, _, conflicts = adopt.plan_file(env, prefix="N8N_")
+            self.assertEqual({p.name: p.key for p in proposals}, {"N8N_SECRET": "SECRET"})
+            self.assertEqual(conflicts, ["N8N_N8N_SECRET"])
+            cfg = Path(tmp) / "app.toml"
+            cfg.write_text('[db]\npassword = "un"\n\n[db_]\npassword = "deux"\n')
+            proposals, _, conflicts = adopt.plan_file(cfg)
+            self.assertEqual((proposals, conflicts), ([], ["DB_PASSWORD"]))
+
+    def test_a_prefix_cannot_carry_anything_but_a_name(self):
+        import tempfile
+        from bvsecrets import adopt
+        with tempfile.TemporaryDirectory() as tmp:
+            env = Path(tmp) / ".env"
+            env.write_text("SECRET=valeur\n")
+            for mauvais in ("X:\n  kind: hex\n  ", "n8n_", "A B", "9X_"):
+                with self.assertRaises(adopt.ConfigError):
+                    adopt.plan_file(env, prefix=mauvais)
