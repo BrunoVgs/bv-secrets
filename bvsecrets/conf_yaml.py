@@ -33,7 +33,7 @@ forme d'origine survivent a un `adopt` ou a une edition depuis le dashboard.
 import os
 import re
 
-from .config import CONF, ConfigError, normalize_group
+from .config import CONF, ConfigError, normalize_group, plain
 
 # Un `#` ne commence un commentaire que precede d'un espace ou en debut de ligne.
 # Sans cette regle, `env:pihole#FTLCONF_webserver_api_password` perdrait sa moitie
@@ -278,6 +278,7 @@ def entry_from(block: dict) -> dict:
     est apparu -- c'est exactement ce que ce point d'entree unique empeche."""
     entry = {f: str(block.get(f, "")).strip() for f in TEXT_FIELDS}
     entry["kind"] = entry["kind"] or "manual"
+    entry["note"] = plain(entry["note"]).strip()
     entry["group"] = normalize_group(entry["group"], entry["kind"])
     for f in LIST_FIELDS:
         v = block.get(f, [])

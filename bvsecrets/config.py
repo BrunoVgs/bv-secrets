@@ -225,6 +225,13 @@ GROUPS = set(GROUP_ORDER)
 GROUP_ALIASES = {"careful": "app"}
 
 
+def plain(text: str) -> str:
+    """A note or label as it may be shown in a terminal: no control characters.
+    A declaration can come from another instance or from the dashboard; an
+    escape sequence in it would otherwise be obeyed by whoever reads it."""
+    return "".join(ch for ch in text if ch.isprintable())
+
+
 def normalize_group(group: str, kind: str = "") -> str:
     """Le groupe effectif d'un secret.
 

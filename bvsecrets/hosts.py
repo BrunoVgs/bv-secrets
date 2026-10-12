@@ -24,7 +24,7 @@ import os
 import re
 from pathlib import Path
 
-from .config import HOST_KEYS_DIR, HOSTS, REPO_URL, ConfigError
+from .config import HOST_KEYS_DIR, HOSTS, REPO_URL, ConfigError, plain
 
 REGISTRY = HOST_KEYS_DIR / "registry.json"
 # Cible ssh d'un envoi d'instance : `compte@machine` ou un alias de ~/.ssh/config.
@@ -56,7 +56,7 @@ def entries() -> dict:
     for name, entry in _registry().items():
         if isinstance(entry, dict) and entry.get("url"):
             merged[name] = {"url": str(entry["url"]).rstrip("/"),
-                            "note": str(entry.get("note") or ""), "source": "registry"}
+                            "note": plain(str(entry.get("note") or "")), "source": "registry"}
     return merged
 
 

@@ -12,7 +12,7 @@ passent tous par ces trois fonctions, et aucun n'a a savoir dans quoi il ecrit.
 import os
 
 from . import conf_yaml
-from .config import CONF, is_yaml, normalize_group
+from .config import CONF, is_yaml, normalize_group, plain
 
 
 def write_text(text: str) -> None:
@@ -82,5 +82,5 @@ def entry_from_ini(section) -> dict:
         "compute": section.get("compute", "").strip(),
         "probe": section.get("probe", "").strip(),
         "validate": section.get("validate", "").strip(),
-        "note": section.get("note", "").strip(),
+        "note": plain(section.get("note", "")).strip(),
     }

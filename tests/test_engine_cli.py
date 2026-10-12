@@ -266,6 +266,25 @@ class TestGetEndsTheLineOnlyInATerminal(CLITestCase):
         self.assertIn("compte admin", shown)      # l'identifiant qui va avec
 
 
+class TestNotesCarryNoControlCharacters(CLITestCase):
+    """Une note s'affiche dans le terminal (get, completion) et peut venir d'une
+    autre instance : une sequence d'echappement y serait executee par le terminal."""
+
+    def test_an_escape_sequence_in_a_note_is_dropped_on_load(self):
+        self.conf.write_text("[APP_SECRET]\nkind = password\nnote = compte \x1b]0;titre\x07admin\x1b[2J\n"
+                             "sinks =\n    file:" + str(self.base / "s.txt") + "\n")
+        env = {**os.environ, "PYTHONPATH": str(ROOT), "BV_SECRETS_DIR": str(self.store),
+               "BV_SECRETS_CONF": str(self.conf)}
+        read = "from bvsecrets.engine import Engine; print(repr(Engine().cfg['APP_SECRET']['note']))"
+        note = subprocess.run([sys.executable, "-c", read], env=env, capture_output=True, text=True)
+        self.assertEqual(note.stdout.strip(), repr("compte ]0;titreadmin[2J"), note.stderr)
+
+    def test_the_yaml_reader_drops_them_too(self):
+        from bvsecrets import conf_yaml
+        entry = conf_yaml.entry_from({"kind": "password", "note": "compte \x1b[2Jadmin\x07"})
+        self.assertEqual(entry["note"], "compte [2Jadmin")
+
+
 class TestSetReadsStdin(CLITestCase):
     """Une valeur passee en argument se lit dans `ps` le temps de la commande, et
     reste dans l'historique du shell. `-` la prend sur l'entree standard."""
