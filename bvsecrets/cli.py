@@ -294,7 +294,9 @@ def cmd_get(a, e):
             or difflib.get_close_matches(a.key.upper(), known, n=5, cutoff=0.5)
         raise ConfigError(f"clé inconnue: {a.key}"
                           + (f"\nProches : {', '.join(near[:8])}" if near else ""))
-    sys.stdout.write(e.value_of(a.key))
+    # Dans un terminal, finir la ligne : sans cela zsh colle un `%` a la valeur
+    # et on le copie avec. Dans un tube ou `$(...)`, la valeur seule.
+    sys.stdout.write(e.value_of(a.key) + ("\n" if sys.stdout.isatty() else ""))
 
 
 def cmd_set(a, e):

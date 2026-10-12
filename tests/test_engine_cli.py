@@ -229,6 +229,39 @@ class TestBracesThatAreNotSecrets(CLITestCase):
         self.assertIn("1 ok, 0 KO", r.stdout, r.stdout + r.stderr)
 
 
+class TestGetEndsTheLineOnlyInATerminal(CLITestCase):
+    """Sans fin de ligne, zsh affiche un `%` colle a la valeur : copie avec elle,
+    le mot de passe est faux. Dans un tube, rien ne doit s'ajouter a la valeur."""
+
+    def setUp(self):
+        super().setUp()
+        self.conf.write_text("[APP_SECRET]\nkind = password\nsinks =\n    file:" + str(self.base / "s.txt") + "\n")
+        (self.store / "bv-secrets.env").write_text("APP_SECRET=lavaleur\n")
+        os.chmod(self.store / "bv-secrets.env", 0o600)
+
+    def test_a_pipe_gets_the_bare_value(self):
+        self.assertEqual(self.run_cli("get", "APP_SECRET").stdout, "lavaleur")
+
+    def test_a_terminal_gets_a_finished_line(self):
+        import pty
+        env = {**os.environ, "PYTHONPATH": str(ROOT), "BV_SECRETS_DIR": str(self.store),
+               "BV_SECRETS_CONF": str(self.conf), "NO_COLOR": "1"}
+        chunks = []
+        pid, fd = pty.fork()
+        if pid == 0:
+            os.execve(sys.executable, [sys.executable, "-m", "bvsecrets.cli", "get", "APP_SECRET"], env)
+        while True:
+            try:
+                data = os.read(fd, 1024)
+            except OSError:
+                break
+            if not data:
+                break
+            chunks.append(data)
+        os.waitpid(pid, 0)
+        self.assertEqual(b"".join(chunks).replace(b"\r", b""), b"lavaleur\n")
+
+
 class TestSetReadsStdin(CLITestCase):
     """Une valeur passee en argument se lit dans `ps` le temps de la commande, et
     reste dans l'historique du shell. `-` la prend sur l'entree standard."""
