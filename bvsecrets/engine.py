@@ -277,8 +277,11 @@ class Engine:
     # ---- encrypted mirror ----
     def seal(self, quiet=False):
         if not KEYFILE.exists():
-            KEYFILE.write_bytes(pysecrets.token_bytes(32))
-            os.chmod(KEYFILE, 0o600)
+            # Hex text, not raw bytes: `-pass file:` keeps only the first line and stops
+            # at a NUL, so about one random binary key in five would be cut short silently.
+            fd = os.open(KEYFILE, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(fd, "w") as fh:
+                fh.write(pysecrets.token_hex(32) + "\n")
         payload = ("# bv-secrets encrypted mirror\n" + MASTER.read_text()
                    + "\n### .local ###\n" + (LOCAL.read_text() if LOCAL.exists() else "")).encode()
         r = self._run(["openssl", "enc", "-aes-256-cbc", "-pbkdf2", "-iter", "200000", "-salt",
