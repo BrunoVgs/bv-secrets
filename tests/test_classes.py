@@ -358,3 +358,13 @@ class TestAdoptReadsNamesTheWayPeopleWriteThem(unittest.TestCase):
         cfg = {"DEJA": {"sinks": ["envfile:/srv/app/.env#PASSWORD", "cmd: restart"]},
                "AILLEURS": {"sinks": ["envfile:/srv/autre/.env#TOKEN"]}}
         self.assertEqual(adopt.managed_keys("/srv/app/.env", cfg), {"PASSWORD"})
+
+    def test_what_describes_a_secret_is_not_one_and_prose_is_not_random(self):
+        from bvsecrets.adopt import looks_secret
+        for name, value in (("account.password_recovery_enabled", "false"), ("credentials.type", "spotify_token"),
+                            ("matrix.secret_file", "/run/secrets/mas_shared"),
+                            ("roles.juge.description", "Tranche chaque candidat sur des faits datés et chiffrés."),
+                            ("project.description", "Server-side secret rotation and audit in one tool.")):
+            self.assertFalse(looks_secret(name, value), name)
+        self.assertTrue(looks_secret("soulseek.password", "court"))
+        self.assertTrue(looks_secret("Account.totp_key", "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"))

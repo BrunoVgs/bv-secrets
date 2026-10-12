@@ -33,7 +33,11 @@ _CONFIG_TOKENS = {"HOST", "HOSTNAME", "PORT", "URL", "URI", "PATH", "DIR", "NAME
 
 # Le DERNIER mot dit ce que la cle est ; ceux d'avant la qualifient. AUTH_USERNAME
 # est un nom de compte, pas un secret, meme si AUTH figure dedans.
-_IDENTITY_WORDS = {"USER", "USERNAME", "LOGIN", "NAME", "HOST", "HOSTNAME", "PORT"}
+_IDENTITY_WORDS = {"USER", "USERNAME", "LOGIN", "NAME", "HOST", "HOSTNAME", "PORT",
+                   # ...et ce qui DECRIT un secret sans en etre un : password_recovery_enabled,
+                   # credentials.type, secret_file, password_hashers.algorithm.
+                   "ENABLED", "ENABLE", "TYPE", "FILE", "PATH", "DIR", "ALGORITHM", "COST",
+                   "ATTEMPTS", "TIMEOUT", "MODE", "DESCRIPTION", "URL", "URI"}
 # Une cle de chiffrement ne se rote pas : la changer rend illisible tout ce
 # qu'elle a chiffre. Seul un humain peut decider de le faire.
 _NEVER_ROTATE = {"ENCRYPTION", "ENCRYPT", "MASTER"}
@@ -60,7 +64,9 @@ def _embeds_credentials(value):
 
 
 def _looks_random(value):
-    return bool(value) and len(value) >= 24 and len(set(value)) >= 10
+    # Une phrase n'est pas un secret : des espaces, c'est de la prose (une
+    # description, une commande), pas une valeur tiree au hasard.
+    return bool(value) and len(value) >= 24 and len(set(value)) >= 10 and not re.search(r"\s", value)
 
 
 def looks_secret(name, value):
@@ -235,7 +241,8 @@ def plan_file(path, prefix="", known=frozenset()):
     """-> (proposals, ignored, conflicts) pour n'importe quel format supporte."""
     found, ignored = [], []
     for key, value in entries(path):
-        if not looks_secret(key, value):
+        # Une cle vide n'a rien a adopter : pas de valeur a importer.
+        if not value or not looks_secret(key, value):
             ignored.append(key)
             continue
         # Le nom du secret ne peut pas porter de point : on remonte le chemin en
