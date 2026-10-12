@@ -102,7 +102,7 @@ def default_group(kind, name=""):
     return "app"
 
 
-_NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
+_NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]*\Z")
 
 
 def _plan(found, prefix, known):

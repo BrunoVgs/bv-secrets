@@ -203,6 +203,44 @@ class TestApplyIsIdempotent(CLITestCase):
         self.assertIn("1 modifié", r.stdout)
 
 
+class TestBracesThatAreNotSecrets(CLITestCase):
+    """Une sonde ou un sink `cmd:` est du shell : `${HOME}`, `%{http_code}`. Seules
+    les accolades qui nomment un secret declare sont remplacees ; les autres
+    etaient videes en silence et la commande echouait sans dire pourquoi."""
+
+    def setUp(self):
+        super().setUp()
+        self.out = self.base / "sortie.txt"
+        self.conf.write_text(
+            "[AUTRE]\nkind = password\nsinks =\n    file:" + str(self.base / "autre.txt") + "\n\n"
+            "[APP_SECRET]\nkind = password\n"
+            "probe = test \"${HOME}\" != \"$\" && echo '%{http_code}' | grep -q http_code && test {AUTRE} = lautre\n"
+            f"sinks =\n    cmd: printf '%s %s %s' {{value}} {{AUTRE}} \"${{HOME}}\" > {self.out}\n")
+        (self.store / "bv-secrets.env").write_text("APP_SECRET=lavaleur\nAUTRE=lautre\n")
+        os.chmod(self.store / "bv-secrets.env", 0o600)
+
+    def test_a_command_sink_keeps_shell_braces_and_resolves_secrets(self):
+        r = self.run_cli("apply", "--only", "APP_SECRET", "--yes")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertEqual(self.out.read_text(), f"lavaleur lautre {os.environ['HOME']}")
+
+    def test_a_probe_keeps_braces_it_does_not_own(self):
+        r = self.run_cli("doctor", "--only", "APP_SECRET")
+        self.assertIn("1 ok, 0 KO", r.stdout, r.stdout + r.stderr)
+
+
+class TestValidatorsRefuseATrailingNewline(unittest.TestCase):
+    def test_no_name_pattern_accepts_a_newline_at_the_end(self):
+        from bvsecrets import adopt, hosts
+        from bvsecrets.worker import jobs, listen
+        for pattern, sample in ((adopt._NAME_RE, "NOM"), (hosts.NAME_RE, "vps1"),
+                                (hosts.SSH_RE, "bv@10.8.0.5"), (hosts.KEY_RE, "k" * 32),
+                                (hosts.URL_RE, "http://10.8.0.5:8765"), (jobs.NAME_RE, "NOM"),
+                                (jobs.USERNAME_RE, "bv"), (listen.ID_RE, "a" * 16)):
+            self.assertTrue(pattern.match(sample), pattern.pattern)
+            self.assertFalse(pattern.match(sample + "\n"), pattern.pattern)
+
+
 @unittest.skipUnless(shutil.which("git"), "git absent : `leaks --staged` lit l'index de git")
 class TestLeaksSurvivesBinaryFiles(CLITestCase):
     """`leaks --staged` lisait les blobs indexes en UTF-8 et levait des qu'un

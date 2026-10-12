@@ -218,13 +218,20 @@ class Engine:
             r = alter("%")               # root may only exist as 'root'@'%'
         return r.returncode == 0
 
-    def _apply_cmd(self, arg: str, value: str, eff: dict) -> bool:
-        # {value} kept literal then substituted: REF would otherwise resolve it to
-        # "" since no secret bears that name.
+    def _command(self, template: str, value: str, data: dict = None) -> str:
+        """La commande d'un sink `cmd:` ou d'une sonde, references resolues :
+        `{value}` est le secret lui-meme, `{AUTRE_SECRET}` la valeur d'un autre.
+        Une accolade qui ne nomme aucun secret est laissee telle quelle -- c'est du
+        shell (`${HOME}`) ou un format de curl (`%{http_code}`), et la vider en
+        silence cassait la commande sans rien dire."""
+        known = set(self.cfg) | set(self.data if data is None else data)
+
         def sub(m):
-            return m.group(0) if m.group(1) == "value" else self.value_of(m.group(1), eff)
-        cmd = REF.sub(sub, arg).replace("{value}", value)
-        return self._run(["sh", "-c", cmd]).returncode == 0
+            return self.value_of(m.group(1), data) if m.group(1) in known else m.group(0)
+        return REF.sub(sub, template).replace("{value}", value)
+
+    def _apply_cmd(self, arg: str, value: str, eff: dict) -> bool:
+        return self._run(["sh", "-c", self._command(arg, value, eff)]).returncode == 0
 
     def _verify_sink(self, sink: str, value: str, eff: dict) -> bool:
         typ, _, arg = sink.partition(":")
@@ -316,10 +323,7 @@ class Engine:
         if not value:
             return ("fail", "valeur absente du store")
         if c["probe"]:
-            def sub(m):
-                return m.group(0) if m.group(1) == "value" else self.value_of(m.group(1))
-            cmd = REF.sub(sub, c["probe"]).replace("{value}", value)
-            rc = self._run(["sh", "-c", cmd]).returncode
+            rc = self._run(["sh", "-c", self._command(c["probe"], value)]).returncode
             return ("ok", "probe") if rc == 0 else ("fail", f"probe exit {rc}")
         for sink in c["sinks"]:
             if sink.startswith("mysql:"):

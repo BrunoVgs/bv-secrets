@@ -29,13 +29,13 @@ from .config import HOST_KEYS_DIR, HOSTS, REPO_URL, ConfigError
 REGISTRY = HOST_KEYS_DIR / "registry.json"
 # Cible ssh d'un envoi d'instance : `compte@machine` ou un alias de ~/.ssh/config.
 # Jamais un tiret en tete, qui se lirait comme une option de ssh.
-SSH_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.@:\-]{0,127}$")
-KEY_RE = re.compile(r"^[A-Za-z0-9_\-]{20,128}$")
-URL_RE = re.compile(r"^https?://[A-Za-z0-9.\-\[\]:]+(:\d{1,5})?$")
+SSH_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.@:\-]{0,127}\Z")
+KEY_RE = re.compile(r"^[A-Za-z0-9_\-]{20,128}\Z")
+URL_RE = re.compile(r"^https?://[A-Za-z0-9.\-\[\]:]+(:\d{1,5})?\Z")
 
 # Un nom d'hote se retrouve dans un nom de fichier et dans un nom de variable
 # d'environnement : le tenir a une forme sans surprise evite les deux pieges.
-NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
+NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}\Z")
 SELF = "self"
 
 

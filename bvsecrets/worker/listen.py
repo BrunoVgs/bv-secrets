@@ -24,8 +24,8 @@ from ..config import (WORKER_BIND, WORKER_BLOCK_SECONDS, WORKER_MAX_FAILS,
                       WORKER_PORT, WORKER_SKEW)
 
 VERSION = "1.1.1"
-ID_RE = re.compile(r"^[0-9a-f]{16}$")
-JOB_RE = re.compile(r"^/v1/jobs/([0-9a-zA-Z]+)$")
+ID_RE = re.compile(r"^[0-9a-f]{16}\Z")
+JOB_RE = re.compile(r"^/v1/jobs/([0-9a-zA-Z]+)\Z")
 # Ce qu'une autre instance a le droit de demander. Le reste (comptes, acces,
 # adoption, revelation de valeur) appartient au dashboard local de CETTE machine
 # et n'a aucune raison de traverser le reseau. Liste blanche : une action

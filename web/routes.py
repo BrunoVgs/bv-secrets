@@ -16,9 +16,9 @@ from bvsecrets.locations import writable_schemes
 
 from . import access, audit_read, files, hostsview, inventory, session, spool
 
-JOB_ID_RE = re.compile(r"^[0-9a-f]{8,32}$")
-NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
-USERNAME_RE = re.compile(r"^[A-Za-z0-9._-]{2,64}$")
+JOB_ID_RE = re.compile(r"^[0-9a-f]{8,32}\Z")
+NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]*\Z")
+USERNAME_RE = re.compile(r"^[A-Za-z0-9._-]{2,64}\Z")
 
 
 def _err(code, message, **extra):

@@ -24,10 +24,10 @@ from .confedit import read_conf_lines, rewrite_section, write_conf_lines
 ROLES_OK = set(ROLES)
 # Section names are INI keys read back by configparser and injected into rendered
 # env files: keep them to the shape the rest of the tool already assumes.
-NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
+NAME_RE = re.compile(r"^[A-Z][A-Z0-9_]*\Z")
 # Same shape as the portal command accepts: an account name travels in HTTP headers
 # (X-Auth-User) and in the audit trail.
-USERNAME_RE = re.compile(r"^[A-Za-z0-9._-]{2,64}$")
+USERNAME_RE = re.compile(r"^[A-Za-z0-9._-]{2,64}\Z")
 
 
 def _render(*args):
