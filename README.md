@@ -337,13 +337,14 @@ in `~/.config/bv-secrets/` or in the directory you run it from.
 ## Shell completion
 
 ```sh
-source completions/bv-secrets.bash                 # bash, this shell
-# or install it:
-cp completions/bv-secrets.bash /etc/bash_completion.d/bv-secrets
-cp completions/_bv-secrets     ~/.zsh/completions/ # zsh: a dir in your $fpath
+bv-secrets completion zsh > ~/.zsh/completions/_bv-secrets   # a directory in your $fpath
+source <(bv-secrets completion bash)                          # bash, e.g. from ~/.bashrc
 ```
 
-Completes subcommands, flags, and dynamically the secret names (`--only`, `get`, …).
+Completes subcommands, flags, instance names and the secret names — the last by any
+fragment, in any case: `bv-secrets get dash<TAB>` finds `HERMES_DASHBOARD_PASSWORD`.
+In zsh each name comes with its kind, the machine that hosts it and its note, since
+names are not something anyone remembers.
 
 ## Commands
 
@@ -502,14 +503,13 @@ bvsecrets/          engine shared by CLI, worker and web
   config.py           one config file (+ env override), domain vocabulary
   locations/          two-way value connectors, one module per format family
   ui.py               terminal colour + tables (TTY-aware)
-  complete.py         bash/zsh completion candidates
+  complete.py         bash/zsh completion: candidates and the scripts themselves
   adopt.py            secret detection in a config file
   audit.py            audit lens over existing logs
   cli.py              command line
   service.py          host setup: store, starter config, generated unit
   secrets.conf.example  template `init` writes, shipped with the package
   worker/             privileged spool executor + audit digest
-completions/        bash + zsh completion scripts
 web/                dashboard (read-only)
 ```
 

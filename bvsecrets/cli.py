@@ -276,7 +276,12 @@ def cmd_push(a, e):
 
 def cmd_get(a, e):
     if a.key not in e.cfg and a.key not in e.data:
-        raise ConfigError(f"clé inconnue: {a.key}")
+        import difflib
+        known = sorted(set(e.cfg) | set(e.data))
+        near = [n for n in known if a.key.lower() in n.lower()] \
+            or difflib.get_close_matches(a.key.upper(), known, n=5, cutoff=0.5)
+        raise ConfigError(f"clé inconnue: {a.key}"
+                          + (f"\nProches : {', '.join(near[:8])}" if near else ""))
     sys.stdout.write(e.value_of(a.key))
 
 
@@ -354,6 +359,15 @@ def cmd_add(a, e):
     conffile.append_sections([conffile.render_section(
         a.name, a.kind, a.group, a.sink, a.length, a.note, a.validate, host=a.host)])
     print(f"ajouté [{a.name}] à {CONF.name}. `bv-secrets gen {a.name}` puis `apply`.")
+
+
+def cmd_completion(a, e):
+    """Le script de completion du shell demande, sur la sortie standard."""
+    from . import complete
+    sys.stdout.write(complete.SCRIPTS[a.shell])
+
+
+cmd_completion.no_engine = True
 
 
 def cmd_rm(a, e):
@@ -727,7 +741,7 @@ def cmd_audit(a, e):
 
 
 _FAMILIES = [
-    ("mise en place", ["init"]),
+    ("mise en place", ["init", "completion"]),
     ("inventaire & santé", ["list", "status", "check", "doctor", "audit", "elevation", "leaks"]),
     ("rotation & application", ["plan", "rotate", "apply", "render", "verify-render"]),
     ("valeurs", ["get", "set", "gen", "add", "rm", "run"]),
@@ -757,7 +771,7 @@ def _epilog(helps):
     for cmd, what in _EXAMPLES:
         out.append(f"  {ui.paint(cmd, ui.CYAN)}\n      {ui.paint(what, ui.DIM)}")
     out += ["", ui.paint("Détail d'une commande : bv-secrets <commande> -h   ·   "
-                         "complétion : source completions/bv-secrets.bash", ui.DIM)]
+                         "complétion : bv-secrets completion zsh|bash", ui.DIM)]
     return "\n".join(out)
 
 
@@ -833,6 +847,8 @@ def build_parser():
         (("--sink",), {"action": "append", "default": []}), (("--note",), {"default": ""}),
         (("--validate",), {"default": ""}),
         (("--host",), {"default": "", "help": "instance qui héberge ce secret (aucun sink ici)"}))
+    add("completion", "script de complétion (noms de secrets compris) pour zsh ou bash",
+        cmd_completion, (("shell",), {"choices": ["zsh", "bash"]}))
     add("rm", "retire un secret : déclaration et valeur", cmd_rm,
         (("name",), {}), (("--yes",), {"action": "store_true"}))
     add("import", "adopte des valeurs déjà en place (fichier/config) vers le store", cmd_import,
