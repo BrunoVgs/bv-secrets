@@ -9,7 +9,9 @@ import time
 
 PASSWORD = os.environ.get("BV_DASH_PASSWORD", "")
 SESSION_TTL = 12 * 3600
-COOKIE_PATH = "/secrets"
+# Prefixe sous lequel le reverse proxy sert le dashboard : le cookie ne part que la.
+# `/` quand il a son propre sous-domaine.
+COOKIE_PATH = os.environ.get("BV_COOKIE_PATH", "/secrets")
 _sessions = {}
 
 
