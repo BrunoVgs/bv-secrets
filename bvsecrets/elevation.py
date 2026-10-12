@@ -89,34 +89,59 @@ def _user(uid: str) -> str:
         return uid or "?"
 
 
-def _records(path: Path, since: float, key: str):
-    """-> [event] carrying `key`, oldest first.
+def _rotation(path: Path):
+    """-> the live log preceded by what auditd rotated out of it, oldest first.
 
-    One elevation spans several lines sharing a serial: SYSCALL holds the identity,
-    EXECVE the arguments, PROCTITLE the full command line.
+    ROTATE renames audit.log to audit.log.1, .1 to .2 and so on. The live file alone
+    holds the last max_log_file megabytes, often a few hours, while the retained set
+    spans days: reading only it would hide most of the trail.
+    """
+    rotated = []
+    try:
+        for sibling in path.parent.glob(path.name + ".*"):
+            suffix = sibling.name[len(path.name) + 1:]
+            if suffix.isdigit():
+                rotated.append((int(suffix), sibling))
+    except OSError:
+        pass
+    return [p for _, p in sorted(rotated, reverse=True)] + [path]
+
+
+def _records(path: Path, since: float, key: str):
+    """-> [event] carrying `key`, oldest first, across the log and its rotations.
+
+    One elevation spans several lines sharing a stamp and a serial: SYSCALL holds the
+    identity, EXECVE the arguments, PROCTITLE the full command line. The serial
+    restarts at each boot, so an event is keyed by both.
     """
     events = {}
-    try:
-        fh = open(path, "r", errors="replace")
-    except OSError:
-        return []
-    with fh:
-        for line in fh:
-            m = _MSG.match(line)
-            if not m:
+    for part in _rotation(path):
+        try:
+            # A rotated file is never written again: older than `since`, it holds nothing newer.
+            if since and part != path and part.stat().st_mtime < since:
                 continue
-            rtype, ts, serial, rest = m.group(1), float(m.group(2)), m.group(3), m.group(4)
-            if since and ts < since:
-                continue
-            fields = dict(_FIELD.findall(rest))
-            ev = events.setdefault(serial, {"ts": ts, "f": {}, "argv": [], "proctitle": ""})
-            if rtype == "SYSCALL":
-                ev["f"] = {k: _plain(v) for k, v in fields.items()}
-            elif rtype == "EXECVE":
-                argc = int(fields.get("argc", "0") or 0)
-                ev["argv"] = [_decoded(fields[f"a{i}"]) for i in range(argc) if f"a{i}" in fields]
-            elif rtype == "PROCTITLE" and "proctitle" in fields:
-                ev["proctitle"] = _decoded(fields["proctitle"]).replace("\x00", " ").strip()
+            fh = open(part, "r", errors="replace")
+        except OSError:
+            continue
+        with fh:
+            for line in fh:
+                m = _MSG.match(line)
+                if not m:
+                    continue
+                rtype, stamp, serial, rest = m.group(1), m.group(2), m.group(3), m.group(4)
+                ts = float(stamp)
+                if since and ts < since:
+                    continue
+                fields = dict(_FIELD.findall(rest))
+                ev = events.setdefault((stamp, serial),
+                                       {"ts": ts, "f": {}, "argv": [], "proctitle": ""})
+                if rtype == "SYSCALL":
+                    ev["f"] = {k: _plain(v) for k, v in fields.items()}
+                elif rtype == "EXECVE":
+                    argc = int(fields.get("argc", "0") or 0)
+                    ev["argv"] = [_decoded(fields[f"a{i}"]) for i in range(argc) if f"a{i}" in fields]
+                elif rtype == "PROCTITLE" and "proctitle" in fields:
+                    ev["proctitle"] = _decoded(fields["proctitle"]).replace("\x00", " ").strip()
     out = [e for e in events.values() if e["f"].get("key") == key]
     return sorted(out, key=lambda e: e["ts"])
 

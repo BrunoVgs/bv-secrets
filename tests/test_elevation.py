@@ -78,6 +78,49 @@ class TestParsing(unittest.TestCase):
         self.assertEqual(self.rows(audit_log=Path(self.tmp.name) / "absent.log"), [])
 
 
+def _event(stamp, serial, comm):
+    return (f'type=SYSCALL msg=audit({stamp}:{serial}): arch=c000003e syscall=59 success=yes '
+            f'exit=0 ppid=1 pid=100 auid=1000 uid=1000 euid=0 tty=(none) comm="{comm}" '
+            f'exe="/usr/bin/{comm}" key="bv_elevation"\n')
+
+
+class TestRotation(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name)
+        self.audit = self.dir / "audit.log"
+        (self.dir / "audit.log.2").write_text(_event("1782410000.000", 7, "oldest"))
+        (self.dir / "audit.log.1").write_text(_event("1782420000.000", 8, "middle"))
+        self.audit.write_text(_event("1782430000.000", 9, "live"))
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def tools(self, **kw):
+        kw.setdefault("audit_log", self.audit)
+        kw.setdefault("key", "bv_elevation")
+        kw.setdefault("context", "zsh-history")
+        quiet = {"zsh-history": lambda ts, window: ([], [])}
+        with mock.patch.dict(elevation.CONTEXT_PROVIDERS, quiet):
+            return [r["tool"] for r in elevation.elevations(**kw)]
+
+    def test_rotated_logs_are_read_oldest_first(self):
+        self.assertEqual(self.tools(), ["oldest", "middle", "live"])
+
+    def test_only_numbered_rotations_count(self):
+        (self.dir / "audit.log.old").write_text(_event("1782400000.000", 6, "stray"))
+        self.assertNotIn("stray", self.tools())
+
+    def test_since_skips_rotations_written_before_it(self):
+        os.utime(self.dir / "audit.log.2", (1782410001, 1782410001))
+        os.utime(self.dir / "audit.log.1", (1782420001, 1782420001))
+        self.assertEqual(self.tools(since=1782415000), ["middle", "live"])
+
+    def test_a_serial_reused_after_reboot_stays_two_events(self):
+        (self.dir / "audit.log.1").write_text(_event("1782420000.000", 9, "before-boot"))
+        self.assertEqual(self.tools(), ["oldest", "before-boot", "live"])
+
+
 class TestZshContext(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
