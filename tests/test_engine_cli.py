@@ -4,6 +4,7 @@ Couvre le coeur risque : machine nue (list/check/status sans rien deploye),
 rotation reelle sur un sink fichier, et surtout le ROLLBACK quand un sink echoue —
 le store doit rester intact et la valeur en place revenir a l'ancienne."""
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -202,6 +203,7 @@ class TestApplyIsIdempotent(CLITestCase):
         self.assertIn("1 modifié", r.stdout)
 
 
+@unittest.skipUnless(shutil.which("git"), "git absent : `leaks --staged` lit l'index de git")
 class TestLeaksSurvivesBinaryFiles(CLITestCase):
     """`leaks --staged` lisait les blobs indexes en UTF-8 et levait des qu'un
     fichier binaire etait indexe -- une police, une image. Le hook pre-commit
