@@ -297,6 +297,11 @@ def cmd_get(a, e):
     # Dans un terminal, finir la ligne : sans cela zsh colle un `%` a la valeur
     # et on le copie avec. Dans un tube ou `$(...)`, la valeur seule.
     sys.stdout.write(e.value_of(a.key) + ("\n" if sys.stdout.isatty() else ""))
+    # Un mot de passe sans son identifiant ne sert a rien : la note le porte
+    # (compte, adresse). Terminal seulement, et sur stderr : jamais dans un tube.
+    note = (e.cfg.get(a.key) or {}).get("note")
+    if note and sys.stdout.isatty():
+        print(f"  ↳ {note}", file=sys.stderr)
 
 
 def cmd_set(a, e):

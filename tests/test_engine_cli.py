@@ -235,12 +235,14 @@ class TestGetEndsTheLineOnlyInATerminal(CLITestCase):
 
     def setUp(self):
         super().setUp()
-        self.conf.write_text("[APP_SECRET]\nkind = password\nsinks =\n    file:" + str(self.base / "s.txt") + "\n")
+        self.conf.write_text("[APP_SECRET]\nkind = password\nnote = compte admin\nsinks =\n    file:"
+                             + str(self.base / "s.txt") + "\n")
         (self.store / "bv-secrets.env").write_text("APP_SECRET=lavaleur\n")
         os.chmod(self.store / "bv-secrets.env", 0o600)
 
     def test_a_pipe_gets_the_bare_value(self):
-        self.assertEqual(self.run_cli("get", "APP_SECRET").stdout, "lavaleur")
+        r = self.run_cli("get", "APP_SECRET")
+        self.assertEqual((r.stdout, r.stderr), ("lavaleur", ""))
 
     def test_a_terminal_gets_a_finished_line(self):
         import pty
@@ -259,7 +261,9 @@ class TestGetEndsTheLineOnlyInATerminal(CLITestCase):
                 break
             chunks.append(data)
         os.waitpid(pid, 0)
-        self.assertEqual(b"".join(chunks).replace(b"\r", b""), b"lavaleur\n")
+        shown = b"".join(chunks).replace(b"\r", b"").decode()
+        self.assertTrue(shown.startswith("lavaleur\n"), shown)
+        self.assertIn("compte admin", shown)      # l'identifiant qui va avec
 
 
 class TestSetReadsStdin(CLITestCase):
