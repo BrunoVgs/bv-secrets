@@ -108,12 +108,12 @@ def _client_ip(req: dict) -> str:
     return ip.rsplit(":", 1)[0] if ip.count(":") == 1 else ip
 
 
-def caddy_events(since: float = 0.0):
+def caddy_events(since: float = 0.0, files=None, roles=None):
     """HTTP accesses in plain words. Drops static assets and any path prefix in
     BV_AUDIT_IGNORE_PATHS (internal polling, health checks)."""
-    roles = _service_roles()
+    roles = _service_roles() if roles is None else roles
     out = []
-    for path in _caddy_files(since):
+    for path in (_caddy_files(since) if files is None else files):
         for line in _read_caddy(path):
             try:
                 o = json.loads(line)
@@ -151,6 +151,45 @@ def caddy_events(since: float = 0.0):
             if outcome == "deny" and roles.get(service):
                 detail += f" [rôles requis : {'+'.join(roles[service])}]"
             out.append(event(ts, "access", actor, service, outcome, detail))
+    return out
+
+
+# A rolled Caddy log never changes once compressed. The digest is rebuilt every
+# minute, so each rolled file is reduced once per worker process instead of being
+# copied out of the container, decompressed and parsed again on every rebuild.
+_ROLLED = {}
+
+
+def _latest_per_triple(events, gated):
+    """Most recent event of each (actor, target, outcome), filtered as the digest does."""
+    best = {}
+    for e in events:
+        if e["outcome"] != "deny" and gated and e["target"] not in gated:
+            continue
+        k = (e["actor"], e["target"], e["outcome"])
+        if k not in best or e["ts"] > best[k]["ts"]:
+            best[k] = e
+    return list(best.values())
+
+
+def _digest_access(since: float):
+    roles = _service_roles()
+    gated = set(roles)
+    sig = tuple(sorted((s, tuple(r)) for s, r in roles.items()))
+    live = CADDY_LOG_DIR / "access.log"
+    out, used = [], set()
+    for path in _caddy_files(since):
+        if path == live:
+            out += caddy_events(since, files=[path], roles=roles)
+            continue
+        st = path.stat()
+        key = (str(path), st.st_size, st.st_mtime_ns, sig)
+        used.add(key)
+        if key not in _ROLLED:
+            _ROLLED[key] = _latest_per_triple(caddy_events(0.0, files=[path], roles=roles), gated)
+        out += [e for e in _ROLLED[key] if not since or e["ts"] >= since]
+    for key in set(_ROLLED) - used:
+        del _ROLLED[key]
     return out
 
 
@@ -366,7 +405,7 @@ def build_worker_digest(days: int = 30):
             pass
     try:
         gated = set(_service_roles())             # services you actually put behind the matrix
-        access = sorted(caddy_events(since), key=lambda e: e["ts"], reverse=True)
+        access = sorted(_digest_access(since), key=lambda e: e["ts"], reverse=True)
         seen, uniq = set(), []
         for e in access:                          # keep the most recent of each triple
             key = (e["actor"], e["target"], e["outcome"])
