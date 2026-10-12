@@ -1,0 +1,49 @@
+/* Charge en dernier : ces regles doivent l'emporter sur les grilles de bureau. */
+/* ── Telephone et fenetre etroite ─────────────────────────────────────────
+   La barre laterale devient un bandeau qu'on fait defiler du doigt, et chaque
+   tableau defile DANS son panneau : la page elle-meme ne deborde jamais. */
+@media(max-width:760px){
+  .app{flex-direction:column}
+  .side{width:100%;height:auto;position:sticky;top:0;z-index:40;flex-direction:row;align-items:center;
+    gap:4px;padding:8px 10px;border-right:0;border-bottom:1px solid var(--bd);overflow-x:auto;
+    background:rgba(12,12,12,.92);scrollbar-width:none}
+  .side::-webkit-scrollbar{display:none}
+  .brand{padding:0 6px 0 2px}
+  .brand>div,.spacer,.daemon .t{display:none}
+  .brand .mark{width:28px;height:28px}
+  .nav{width:auto;flex:none;padding:8px 10px;gap:7px}
+  .nav .lb{font-size:12.5px;white-space:nowrap}
+  .daemon{flex:none;padding:8px;border-radius:9px}
+  .sidelink{flex:none;white-space:nowrap;padding:8px 10px}
+  main{padding:16px 12px 48px;gap:16px}
+  header.hd{flex-wrap:wrap;gap:10px}
+  .who{display:none}
+  header.hd .ttl{font-size:16px}
+  .stats,.stats.three{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+  .stat{padding:14px}
+  .panel{overflow-x:auto}
+  .panel .ph{flex-wrap:wrap;padding:14px}
+  .row{padding:12px 14px}
+  .bar{gap:8px}
+  input.search{max-width:none;min-width:0}
+  /* Instances : le nom et l'etat sur une ligne, les boutons dessous. L'URL, la
+     cle et le compte de secrets sont dans la fiche, a un doigt de la. */
+  .g-host.head{display:none}
+  .g-host{grid-template-columns:minmax(0,1fr) minmax(0,1.3fr)}
+  .g-host>div:nth-child(2),.g-host>div:nth-child(3),.g-host>div:nth-child(4){display:none}
+  .g-host>div:nth-child(5){display:block;font-size:12px}
+  .g-host>.right{grid-column:1/-1;display:flex;gap:8px}
+  .g-host>.right .btn{flex:1;padding:10px}
+  /* Coffre et Rotation : le NOM d'abord, sur toute la largeur. Ecrase dans une
+     colonne etroite il devenait illisible, et c'est lui qu'on vient chercher. */
+  .g-coffre.head,.g-rot.head{display:none}
+  .g-coffre{grid-template-columns:14px auto auto minmax(0,1fr);row-gap:8px}
+  .g-coffre>div:nth-child(2){grid-column:2/-1;min-width:0}
+  .g-coffre>div:nth-child(3){grid-column:2}
+  .g-coffre>div:nth-child(5){text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .g-coffre .nm,.g-rot .nm{overflow-wrap:anywhere;white-space:normal}
+  .g-rot{grid-template-columns:auto auto minmax(0,1fr) auto;row-gap:8px}
+  .g-rot>div:nth-child(1){grid-column:1/-1}
+  .g-rot>.right{grid-column:4}
+  .view[data-view=coffre] .bar input.search{flex:1 1 100%}
+}
