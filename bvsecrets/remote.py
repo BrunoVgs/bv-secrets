@@ -106,6 +106,17 @@ def probe(host: str) -> dict:
             "actions": info.get("actions") or []}
 
 
+def inventory(host: str) -> dict:
+    """La fiche de l'hote : sa machine et ses secrets declares, sans valeur."""
+    try:
+        return run(host, log=lambda *_: None, action="inventory").get("data") or {}
+    except RemoteError as exc:
+        if "action refusée" in str(exc):
+            raise RemoteError(f"{host}: instance trop ancienne pour donner sa fiche "
+                              f"(mettre bv-secrets à jour là-bas)") from None
+        raise
+
+
 def submit(host: str, **job) -> str:
     """Depose le job et rend son identifiant. Le contenu n'est jamais journalise :
     un `set_value` porte une valeur en clair."""

@@ -275,6 +275,8 @@ TOTP_DRIFT = int(_setting("BV_TOTP_DRIFT", "1") or "1")
 # que si on l'a explicitement dit, et on l'attache a wg0, jamais a 0.0.0.0.
 WORKER_BIND = _setting("BV_WORKER_BIND", "")
 WORKER_PORT = int(_setting("BV_WORKER_PORT", "8765") or "8765")
+# D'ou une machine distante clone bv-secrets quand on lui envoie une instance.
+REPO_URL = _setting("BV_REPO_URL", "https://github.com/BrunoVgs/bv-secrets.git")
 # Delai d'attente par defaut d'un job pousse chez un hote distant.
 REMOTE_TIMEOUT = int(_setting("BV_REMOTE_TIMEOUT", "120") or "120")
 

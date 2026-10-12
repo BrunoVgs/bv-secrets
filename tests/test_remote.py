@@ -297,6 +297,82 @@ class TwoInstances(unittest.TestCase):
             time.sleep(0.3)
         self.fail("aucun résultat de job")
 
+    # ---- la fiche d'une instance ----
+    def test_the_sheet_describes_the_machine_and_its_secrets_without_any_value(self):
+        self.control("push", "--only", "APP_SECRET")
+        out = self._control_python(
+            "import json;from web import hostsview;print(json.dumps(hostsview.sheet('agent')))")
+        self.assertEqual(out["machine"]["hostname"], socket.gethostname())
+        self.assertGreater(out["machine"]["memTotal"], 0)
+        self.assertEqual([s["name"] for s in out["secrets"]], ["APP_SECRET"])
+        secret = out["secrets"][0]
+        self.assertEqual((secret["state"], secret["managed"], secret["len"]), ("sync", True, 14))
+        self.assertEqual(out["missing"], [])
+        self.assertNotIn("valeur-poussee", json.dumps(out))
+
+    def test_the_sheet_names_what_is_declared_here_but_unknown_there(self):
+        self.control_conf.write_text(self.control_conf.read_text()
+                                     + "\n[FANTOME]\nkind = password\nhost = agent\n")
+        out = self._control_python(
+            "import json;from web import hostsview;print(json.dumps(hostsview.sheet('agent')))")
+        self.assertEqual(out["missing"], ["FANTOME"])
+
+    def test_status_and_list_name_the_host_of_a_hosted_secret(self):
+        status = self.control("status").stdout
+        self.assertIn("hébergé par agent", status)
+        self.assertIn("1 hébergés ailleurs", status)
+        self.assertIn("@agent", self.control("list").stdout)
+
+    def test_the_cli_prints_the_sheet(self):
+        r = self.control("hosts", "agent", "--info")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn(socket.gethostname(), r.stdout)
+        self.assertIn("APP_SECRET", r.stdout)
+
+    def test_a_hosted_secret_is_added_without_a_sink_and_removed_whole(self):
+        r = self.control("add", "NOUVEAU", "--kind", "hex", "--host", "agent")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertIn("host  = agent", self.control_conf.read_text())
+        self.assertNotIn("sinks", self.control_conf.read_text().split("[NOUVEAU]")[1])
+        refused = self.control("add", "AUTRE", "--host", "agent", "--sink", "file:/tmp/x")
+        self.assertNotEqual(refused.returncode, 0)
+        self.control("gen", "NOUVEAU")
+        r = self.control("rm", "NOUVEAU", "--yes")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertNotIn("NOUVEAU", self.control_conf.read_text())
+        self.assertNotIn("NOUVEAU", (self.control_store / "bv-secrets.env").read_text())
+        self.assertIn("[APP_SECRET]", self.control_conf.read_text())
+
+    def test_the_registry_adds_an_instance_and_wins_over_the_ini(self):
+        r = self.control("hosts", "autre", "--url", "http://127.0.0.1:1/", "--note", "essai")
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        out = self._control_python(
+            "import json;from web import hostsview;print(json.dumps(hostsview.data()))")
+        by_name = {h["name"]: h for h in out["hosts"]}
+        self.assertEqual((by_name["autre"]["url"], by_name["autre"]["note"],
+                          by_name["autre"]["editable"], by_name["autre"]["hasKey"]),
+                         ("http://127.0.0.1:1", "essai", True, True))
+        self.assertFalse(by_name["agent"]["editable"])
+        self.assertEqual(self.control("hosts", "sans url", "--url", "ftp://x").returncode, 1)
+        self.assertEqual(self.control("hosts", "autre", "--remove").returncode, 0)
+        self.assertNotIn("autre", self.control("hosts").stdout)
+        self.assertFalse((self.control_store / "hosts" / "autre.key").exists())
+
+    def test_linking_declares_a_remote_secret_here_without_fetching_its_value(self):
+        self.agent_conf.write_text(self.agent_conf.read_text() + "\n[AUTRE_CLE]\nkind = hex\n"
+                                   f"length = 32\nsinks =\n    envfile:{self.target}#AUTRE\n")
+        code = ("import json;from bvsecrets.worker.jobs import do_host_link;"
+                "print(json.dumps(do_host_link({'host':'agent','secrets':['AUTRE_CLE']}, lambda *_: None)))")
+        out = self._control_python(code)
+        self.assertEqual(out["linked"], ["AUTRE_CLE"])
+        declared = self.control_conf.read_text().split("[AUTRE_CLE]")[1]
+        self.assertIn("host  = agent", declared)
+        self.assertNotIn("sinks", declared)
+        self.assertNotIn("AUTRE_CLE", (self.control_store / "bv-secrets.env").read_text())
+        again = subprocess.run([sys.executable, "-c", code], env=self.control_env,
+                               capture_output=True, text=True)
+        self.assertIn("déjà déclaré ici", again.stderr)
+
 
 class WorkerSurvivesAnUnreachableBind(unittest.TestCase):
     """Au boot, le worker demarre avant que wg0 soit montee : l'adresse d'ecoute

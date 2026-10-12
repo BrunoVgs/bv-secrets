@@ -14,7 +14,7 @@ NAV_ITEMS = [
     ("fichiers", "Fichiers", "files"),
     ("rotation", "Rotation", "auto"),
     ("acces", "Accès &amp; rôles", "services"),
-    ("hotes", "Hôtes", "hosts"),
+    ("hotes", "Instances", "hosts"),
     ("audit", "Audit", None),
     ("docs", "Docs", None),
 ]

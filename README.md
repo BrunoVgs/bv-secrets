@@ -126,6 +126,58 @@ Re-run with --yes to declare these secrets and import their values.
 Nothing is written without `--yes`. A name with `API`/`TOKEN` becomes an `apikey`
 (never generated). New secrets land in `app`, never `auto`.
 
+## Instances
+
+One bv-secrets per machine. Each instance keeps its own store, its own declarations
+and its own privileged worker; none of them ever reads another machine's disk. What
+crosses the network is a job, signed, dropped into the other instance's spool — the
+same job format the local dashboard uses, so the same executor and the same
+privileges run it over there.
+
+A secret that lives on another machine is declared here with `host:` and **no sink**:
+its targets are declared over there, by that machine. You edit and rotate it here,
+the value travels, the remote worker applies its own sinks.
+
+```yaml
+QBITTORRENT_PASSWORD:
+  kind: password
+  host: xeon
+```
+
+```sh
+bv-secrets hosts xeon --url http://10.8.0.4:8765     # register it, generate its key
+bv-secrets hosts xeon --deploy bv@10.8.0.4           # install or update it over ssh
+bv-secrets hosts --test                              # reachable? clock? key?
+bv-secrets hosts xeon --info                         # the machine, and its secrets
+bv-secrets add QBITTORRENT_PASSWORD --host xeon      # drive one of its secrets from here
+bv-secrets push                                      # send the current values
+```
+
+`--deploy` sends the instance to the machine: it clones or updates the code,
+creates the store, writes the shared key, installs the worker service and opens
+its listener on the address taken from the URL. Root is used over there only if it
+is available without a password; otherwise the store falls back under `$HOME` and
+the remaining commands are printed. Without `--deploy`, install bv-secrets on the
+machine yourself and set `BV_WORKER_BIND`, `BV_WORKER_PORT` and the key
+(`<store>/hosts/self.key`).
+
+The dashboard's **Instances** tab does the same: add an instance (optionally sent
+over ssh), test it, and open its sheet — the machine it runs on, the secrets it
+declares with their state *as seen from there*, and which of them are driven from
+here. Ticking the others declares them here in one click. No value is ever pulled
+back: an instance does not reveal its values over the network.
+
+Requests are signed with a per-host key that never travels (method, path,
+timestamp, nonce and body are covered), valid once, inside a five-minute window;
+repeated failures block the source. The listener is off unless `BV_WORKER_BIND` is
+set — bind it to the tunnel address, never `0.0.0.0`. Only `set_value`, `apply`,
+`rotate`, `doctor` and the read-only `inventory` are accepted from another instance:
+accounts, adoption and value reveal stay local.
+
+The registry lives in the store (`<store>/hosts/registry.json`), which is what lets
+the dashboard manage it. A `[hosts]` section in `bv-secrets.ini` is still read, for
+those who prefer their machines in a versioned file.
+
 ## Audit
 
 `audit` is a read-only lens over logs the box already writes. It stores nothing new.

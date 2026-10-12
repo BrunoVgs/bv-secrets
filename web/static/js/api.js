@@ -59,6 +59,9 @@ async function postAuthed(url, payload) {
 }
 
 export const addSecret = (payload) => postAuthed("api/secret/add", payload);
+export const hostSheet = (name) => postAuthed("api/hosts/sheet", { name });
+export const hostKey = (name, password) => postAuthed("api/hosts/key", { name, password });
+export const hostDeploy = (payload) => postAuthed("api/hosts/deploy", payload);
 export const createUser = (payload) => postAuthed("api/user/create", payload);
 
 export async function reveal(name, password) {

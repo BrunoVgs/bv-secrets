@@ -6,7 +6,9 @@ testable without a socket.
 """
 import re
 
-from bvsecrets import Engine, looks_like_apikey
+from bvsecrets import Engine, hosts, looks_like_apikey
+from bvsecrets.config import ConfigError
+from bvsecrets.remote import RemoteError
 from bvsecrets.config import (ALL_KINDS, GEN_KINDS, GROUPS, MIN_ACCOUNT_PASSWORD,
                              normalize_group,
                               ROLES, SINK_TYPES)
@@ -80,6 +82,75 @@ def api_hosts_push(req):
         return _err(400, f"aucun secret hébergé sur '{name}'")
     return 202, {"id": spool.queue(action="apply", only=sorted(targets), yes=True),
                  "targets": sorted(targets)}
+
+
+def api_hosts_sheet(req):
+    """La fiche d'une instance. Synchrone comme `test` : un aller-retour signe,
+    le temps que son worker reponde."""
+    name = str(req.body.get("name") or "").strip()
+    try:
+        return 200, hostsview.sheet(name)
+    except (RemoteError, ConfigError) as exc:
+        return _err(502, str(exc))
+
+
+def api_hosts_save(req):
+    name = str(req.body.get("name") or "").strip()
+    url = str(req.body.get("url") or "").strip().rstrip("/")
+    if not hosts.NAME_RE.match(name) or name == hosts.SELF:
+        return _err(400, "nom invalide : minuscules, chiffres, - et _ (32 au plus)")
+    if not hosts.URL_RE.match(url):
+        return _err(400, "URL invalide : attendu http://adresse:port")
+    return 202, {"id": spool.queue(action="host_set", name=name, url=url,
+                                   note=str(req.body.get("note") or ""),
+                                   newkey=bool(req.body.get("newkey")))}
+
+
+def api_hosts_deploy(req):
+    """Envoie une instance sur sa machine. Le worker s'y connecte par ssh avec ses
+    propres cles : c'est un acte fort, donc le mot de passe, comme pour une valeur."""
+    if not session.check_password(str(req.body.get("password", ""))):
+        return _err(401, "bad password")
+    code, body = api_hosts_save(req)
+    if code != 202:
+        return code, body
+    target = str(req.body.get("ssh") or "").strip()
+    if not hosts.SSH_RE.match(target):
+        return _err(400, "cible ssh invalide : compte@machine, ou un alias ssh")
+    name = str(req.body.get("name")).strip()
+    return 202, {"id": spool.queue(action="host_deploy", name=name, ssh=target,
+                                   url=str(req.body.get("url")).strip().rstrip("/"),
+                                   note=str(req.body.get("note") or ""))}
+
+
+def api_hosts_remove(req):
+    name = str(req.body.get("name") or "").strip()
+    if name not in hosts.names():
+        return _err(400, f"instance inconnue: {name}")
+    return 202, {"id": spool.queue(action="host_remove", name=name)}
+
+
+def api_hosts_link(req):
+    """Declare ici des secrets que l'instance porte deja, pour les piloter d'ici."""
+    name = str(req.body.get("name") or "").strip()
+    secrets = req.body.get("secrets") or []
+    if name not in hosts.names():
+        return _err(400, f"instance inconnue: {name}")
+    if not isinstance(secrets, list) or not secrets or not all(
+            isinstance(s, str) and NAME_RE.match(s) for s in secrets):
+        return _err(400, "aucun secret sélectionné")
+    return 202, {"id": spool.queue(action="host_link", host=name, secrets=sorted(set(secrets)))}
+
+
+def api_hosts_key(req):
+    """La cle partagee d'une instance, pour la poser chez elle a la main. C'est
+    une valeur : meme regle que `reveal`, le mot de passe a chaque fois."""
+    if not session.check_password(str(req.body.get("password", ""))):
+        return _err(401, "bad password")
+    name = str(req.body.get("name") or "").strip()
+    if name not in hosts.names():
+        return _err(404, "inconnu")
+    return 200, {"name": name, "key": hosts.key(name) or ""}
 
 
 def api_doctor(req):
@@ -232,6 +303,12 @@ POST_ROUTES = {
     "/api/doctor": api_doctor,
     "/api/hosts/test": api_hosts_test,
     "/api/hosts/push": api_hosts_push,
+    "/api/hosts/sheet": api_hosts_sheet,
+    "/api/hosts/save": api_hosts_save,
+    "/api/hosts/remove": api_hosts_remove,
+    "/api/hosts/deploy": api_hosts_deploy,
+    "/api/hosts/link": api_hosts_link,
+    "/api/hosts/key": api_hosts_key,
     "/api/access/apply": api_access_apply,
     "/api/users": api_users,
     "/api/user": api_user,
@@ -244,4 +321,5 @@ POST_ROUTES = {
 }
 # Routes that take or return a value behind a password: the server applies the
 # anti-bruteforce delay on their 401 responses.
-RATE_LIMITED = {"/api/reveal", "/api/secret/add", "/api/user/create", "/api/login"}
+RATE_LIMITED = {"/api/reveal", "/api/secret/add", "/api/user/create", "/api/login",
+                "/api/hosts/key", "/api/hosts/deploy"}

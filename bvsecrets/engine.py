@@ -16,9 +16,9 @@ from pathlib import Path
 
 from . import locations, validate
 from .config import (ALL_KINDS, COMPOSE_DIR, CONF, ConfigError, DEFAULT_LEN, GEN_KINDS,
-                     HOSTS, KEYFILE, LOCAL, MASTER, META, MIRROR, REF, RENDER_DIR,
+                     KEYFILE, LOCAL, MASTER, META, MIRROR, REF, RENDER_DIR,
                      is_yaml, normalize_group)
-from . import conf_yaml, conffile, remote
+from . import conf_yaml, conffile, hosts, remote
 from .envfile import parse_env, write_env
 
 
@@ -560,27 +560,35 @@ class Engine:
         """Compare store value to in-place. A secret with only write-only sinks
         (mysql/linux/cmd) is non verifiable ; a readable sink whose file/cle is
         absent = declare mais pas deploye (cas machine nue)."""
-        counts = {"sync": 0, "drift": 0, "extern": 0, "absent": 0, "unknown": 0}
+        counts = {"sync": 0, "drift": 0, "extern": 0, "absent": 0, "unknown": 0, "remote": 0}
         for n in names:
-            stored = self.value_of(n)
-            found, where = self.read_current(n)
-            readable = any(self._sink_readable(s) for s in self.cfg.get(n, {}).get("sinks", []))
-            if found is not None and not stored:
-                mark, detail, key = "+", f"présent dehors, absent du store ({where.split('#')[0]})", "extern"
-            elif found is not None and found == stored:
-                mark, detail, key = "=", "synchronisé", "sync"
-            elif found is not None:
-                mark, detail, key = "!", f"DÉRIVE vs {where.split('#')[0]}", "drift"
-            elif readable:
-                mark, detail, key = "-", "déclaré, non déployé", "absent"
-            else:
-                mark, detail, key = "?", "non vérifiable (sink write-only)", "unknown"
+            mark, detail, key = self.state_of(n)
             counts[key] += 1
             log(f"{mark} {n:34} {detail}")
         log(f"\n{counts['sync']} synchronisés, {counts['drift']} dérives, "
             f"{counts['extern']} à importer, {counts['absent']} non déployés, "
-            f"{counts['unknown']} non vérifiables.")
+            f"{counts['unknown']} non vérifiables, {counts['remote']} hébergés ailleurs.")
         return counts["drift"]
+
+    def state_of(self, n):
+        """-> (marque, detail, cle) : ou en est la valeur en place par rapport au
+        store. Un secret heberge ailleurs n'a rien a comparer ici : c'est son
+        instance qui le sait, et `hosts <nom> --info` qui le lui demande."""
+        host = self.cfg.get(n, {}).get("host", "")
+        if host:
+            return "@", f"hébergé par {host}", "remote"
+        stored = self.value_of(n)
+        found, where = self.read_current(n)
+        readable = any(self._sink_readable(s) for s in self.cfg.get(n, {}).get("sinks", []))
+        if found is not None and not stored:
+            return "+", f"présent dehors, absent du store ({where.split('#')[0]})", "extern"
+        if found is not None and found == stored:
+            return "=", "synchronisé", "sync"
+        if found is not None:
+            return "!", f"DÉRIVE vs {where.split('#')[0]}", "drift"
+        if readable:
+            return "-", "déclaré, non déployé", "absent"
+        return "?", "non vérifiable (sink write-only)", "unknown"
 
     def scan(self, location: str, log):
         """List a file's keys to help declare secrets."""
@@ -629,9 +637,9 @@ class Engine:
                 # dans le secrets.conf de l'autre machine, par elle. En accepter
                 # localement laisserait croire que `apply` les ecrit, alors qu'il
                 # ne fait que pousser la valeur.
-                if host not in HOSTS:
+                if host not in hosts.names():
                     problems.append(f"HOST inconnu sur {n}: {host} "
-                                    f"(section [hosts] de bv-secrets.ini)")
+                                    f"(`bv-secrets hosts {host} --url <url>`)")
                 if c["sinks"]:
                     problems.append(f"HOST+SINKS sur {n}: un secret hébergé sur "
                                     f"'{host}' ne déclare pas de sink ici")

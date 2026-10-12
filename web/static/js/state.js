@@ -20,6 +20,8 @@ export const S = {
   hosts: BOOT.hosts,             // instances distantes déclarées dans [hosts]
   hostOrphans: BOOT.hostOrphans, // `host:` pointant vers un hôte non déclaré
   hostState: {},                 // nom -> {state, detail} : rempli par « Tester » seulement
+  hostForm: null,                // brouillon d'instance en cours d'ajout ou de modification
+  hostSheet: null,               // fiche ouverte : {name, data, error, picked, key}
   adoptPlan: null,   // aperçu d'adoption en cours : {file, proposals, ignored, conflicts}
   adding: null,      // formulaire d'ajout ouvert : brouillon du secret à créer
   addingUser: null,  // formulaire ouvert : brouillon du compte de portail à créer

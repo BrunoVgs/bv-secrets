@@ -39,6 +39,16 @@
 .g-files{grid-template-columns:2fr 124px 1.4fr 92px}
 .g-prop{grid-template-columns:30px 1fr 1fr 88px 92px 72px}
 .g-host{grid-template-columns:130px 1.5fr 68px 84px 1.4fr 168px}
+.g-host:not(.head){cursor:pointer}
+.g-hsec{grid-template-columns:20px minmax(0,1fr) auto;padding:9px 0;gap:10px}
+.g-hsec .nm{overflow:hidden;text-overflow:ellipsis}
+.g-hsec .st{text-align:right;font-size:11.5px;white-space:nowrap}
+.g-hsec .dot{display:inline-block}
+.hostform{display:grid;grid-template-columns:150px 1fr 1fr;gap:8px;padding:14px 20px;
+  border-bottom:1px solid var(--line)}
+.hostform .wide{grid-column:1/-1;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.hostform .wide .search{flex:1;min-width:180px}
+@media(max-width:900px){.hostform{grid-template-columns:1fr}}
 .g-audit{grid-template-columns:92px 78px 1fr 1.05fr 96px 2fr}
 .g-audit .mono{font-size:11px}
 .o-allow{color:var(--ok)}.o-deny{color:var(--acc3);font-weight:600}

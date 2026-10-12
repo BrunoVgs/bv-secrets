@@ -14,8 +14,9 @@ from . import (adopt, audit, conf_yaml, conffile, elevation, host, hosts,
 from .config import (CONF, COMPOSE_DIR, CONFIG_FILE, GEN_KINDS, LEAKS_MAX_BYTES, is_identifier, KEYFILE,
                      LOCAL, MASTER, MIRROR, PROJECT_DIR, RENDER_DIR, SECRETS_DIR,
                      OBJ_ORDER, is_yaml, looks_like_apikey, secret_object,
-                     secret_rotation)
+                     secret_rotation, META)
 from .engine import ConfigError, Engine, RotateAborted
+from .worker import confedit
 from .envfile import parse_env, write_env
 
 
@@ -67,7 +68,7 @@ def cmd_list(a, e):
         label, style = ui.rotation_tag(secret_rotation(c["kind"], c["group"], n))
         return [n, (c["kind"], ui.DIM), (label, style), present,
                 (meta.get(n, ""), ui.DIM),
-                (", ".join(svc_of.get(n, ["(no-env)"])), ui.CYAN)]
+                (f"@{c['host']}" if c.get("host") else ", ".join(svc_of.get(n, ["(no-env)"])), ui.CYAN)]
 
     headers = ["SECRET", "KIND", "ROTATION", "VAL", "LAST SET", "SERVICES"]
     if a.flat:
@@ -186,8 +187,51 @@ def cmd_totp(a, e):
     return 0
 
 
+def _duration(seconds: int) -> str:
+    days, rest = divmod(int(seconds), 86400)
+    return f"{days} j {rest // 3600} h" if days else f"{rest // 3600} h {rest % 3600 // 60} min"
+
+
+def _host_info(name, e):
+    """La fiche d'une instance, lue chez elle : la machine, puis ses secrets."""
+    data = remote.inventory(name)
+    m = data.get("machine") or {}
+    gib = 1024 ** 3
+    print(f"{name} — {m.get('hostname', '?')} · {m.get('os', '?')} · noyau {m.get('kernel', '?')}")
+    print(f"  allumée depuis {_duration(m.get('uptime', 0))} · {m.get('cpus', 0)} cœurs · "
+          f"{m.get('memAvailable', 0) / gib:.1f} Go libres sur {m.get('memTotal', 0) / gib:.1f} · "
+          f"disque {m.get('diskFree', 0) / gib:.0f} Go libres sur {m.get('diskTotal', 0) / gib:.0f}")
+    here = {n for n, c in e.cfg.items() if c.get("host") == name}
+    rows = [[s["name"], (s["kind"], ui.DIM), f"{s['len']}c" if s["len"] else ("--", ui.RED),
+             (s.get("lastSet", ""), ui.DIM), s["detail"],
+             ("oui", ui.GREEN) if s["name"] in here else ("non", ui.YELLOW)]
+            for s in data.get("secrets") or []]
+    print(ui.table(rows, headers=["SECRET", "KIND", "VAL", "LAST SET", "ÉTAT LÀ-BAS", "PILOTÉ D'ICI"]))
+    missing = sorted(here - {s["name"] for s in data.get("secrets") or []})
+    if missing:
+        print(f"\n⚠ déclarés ici pour {name} mais inconnus là-bas : {', '.join(missing)}")
+
+
 def cmd_hosts(a, e):
     """Les instances joignables, et ce qui manque pour les joindre."""
+    if a.remove:
+        hosts.remove(a.name)
+        print(f"{a.name}: retirée du registre, clé supprimée.")
+        return
+    if a.url:
+        hosts.save(a.name, a.url, a.note)
+        print(f"{a.name}: enregistrée ({hosts.url(a.name)}).")
+        if not hosts.key(a.name) and not a.key:
+            a.key = "-"
+    if a.deploy:
+        hosts.deploy(a.name, a.deploy, _log)
+        a.test = True
+    elif a.note and a.name and not a.url:
+        hosts.save(a.name, hosts.url(a.name), a.note)
+        print(f"{a.name}: note mise à jour.")
+        return
+    if a.info:
+        return _host_info(a.name, e)
     if a.key:
         value = a.key if a.key != "-" else pysecrets.token_urlsafe(32)
         path = hosts.write_key(a.name, value)
@@ -198,8 +242,8 @@ def cmd_hosts(a, e):
             print(f"\n{value}\n")
         return
     if not hosts.names():
-        print("Aucun hôte déclaré. Section [hosts] de bv-secrets.ini :\n"
-              "\n    [hosts]\n    xeon = http://10.8.0.4:8765\n")
+        print("Aucune instance déclarée. En ajouter une :\n"
+              "\n    bv-secrets hosts xeon --url http://10.8.0.4:8765\n")
         return
     hosted = {}
     for n, c in e.cfg.items():
@@ -297,12 +341,35 @@ def cmd_scan(a, e):
 
 def cmd_add(a, e):
     """Add a secret section to secrets.conf in one command."""
-    if not a.sink:
-        raise ConfigError("donner au moins un sink (env:svc#VAR, file:/p, "
-                          "mysql:u@ctr, cmd:..., envfile:/p#K, json/yaml/ini/toml:/p#a.b.c)")
-    conffile.append_sections(
-        [conffile.render_section(a.name, a.kind, a.group, a.sink, a.length, a.note, a.validate)])
+    if a.name in e.cfg:
+        raise ConfigError(f"{a.name} existe déjà")
+    if a.host:
+        # Heberge ailleurs : ses cibles sont declarees par l'autre instance.
+        hosts.url(a.host)
+        if a.sink:
+            raise ConfigError(f"un secret hébergé sur '{a.host}' ne déclare pas de sink ici")
+    elif not a.sink:
+        raise ConfigError("donner au moins un sink (env:svc#VAR, file:/p, mysql:u@ctr, cmd:..., "
+                          "envfile:/p#K, json/yaml/ini/toml:/p#a.b.c), ou --host <instance>")
+    conffile.append_sections([conffile.render_section(
+        a.name, a.kind, a.group, a.sink, a.length, a.note, a.validate, host=a.host)])
     print(f"ajouté [{a.name}] à {CONF.name}. `bv-secrets gen {a.name}` puis `apply`.")
+
+
+def cmd_rm(a, e):
+    """Retire un secret : sa declaration, sa valeur, sa date. Ce qui est deja
+    ecrit dans les fichiers et les applis n'est pas touche."""
+    if a.name not in e.cfg:
+        raise ConfigError(f"secret inconnu: {a.name}")
+    if not a.yes:
+        print(f"{a.name} serait retiré de {CONF.name} et du store. Relancer avec --yes.")
+        return
+    confedit.write_conf_lines(confedit.remove_section(confedit.read_conf_lines(), a.name))
+    for store in (MASTER, LOCAL, META):
+        data = parse_env(store)
+        if data.pop(a.name, None) is not None:
+            write_env(store, data)
+    print(f"{a.name}: retiré. Les valeurs déjà déployées restent en place.")
 
 
 def cmd_adopt(a, e):
@@ -663,7 +730,7 @@ _FAMILIES = [
     ("mise en place", ["init"]),
     ("inventaire & santé", ["list", "status", "check", "doctor", "audit", "elevation", "leaks"]),
     ("rotation & application", ["plan", "rotate", "apply", "render", "verify-render"]),
-    ("valeurs", ["get", "set", "gen", "add", "run"]),
+    ("valeurs", ["get", "set", "gen", "add", "rm", "run"]),
     ("adoption", ["scan", "import", "adopt"]),
     ("store chiffré", ["seal", "open"]),
     ("instances distantes", ["hosts", "push"]),
@@ -739,9 +806,15 @@ def build_parser():
     add("apply", "pousse les valeurs courantes vers les sinks (sans régénérer)", cmd_apply, only, yes)
     add("totp", "état de l'enrôlement TOTP du dashboard, ou nouvel enrôlement",
         cmd_totp, (("--enrol",), {"action": "store_true"}), yes)
-    add("hosts", "instances bv-secrets distantes : URL, clé, état", cmd_hosts,
+    add("hosts", "instances bv-secrets distantes : URL, clé, état, fiche", cmd_hosts,
         (("name",), {"nargs": "?", "default": ""}),
         (("--test",), {"action": "store_true", "help": "interroger chaque hôte"}),
+        (("--url",), {"default": "", "help": "ajouter ou modifier l'instance <name>"}),
+        (("--note",), {"default": "", "help": "note libre sur l'instance"}),
+        (("--info",), {"action": "store_true", "help": "la machine et ses secrets, lus chez elle"}),
+        (("--remove",), {"action": "store_true", "help": "retirer l'instance <name> et sa clé"}),
+        (("--deploy",), {"default": "", "metavar": "CIBLE_SSH",
+                         "help": "installer ou mettre à jour l'instance <name> sur sa machine, par ssh"}),
         (("--key",), {"default": "", "help": "poser la clé partagée d'un hôte "
                                              "(`-` pour en générer une)"}))
     add("push", "envoie la valeur courante d'un secret à l'instance qui l'héberge",
@@ -758,7 +831,10 @@ def build_parser():
         (("name",), {}), (("--kind",), {"default": "password"}),
         (("--group",), {"default": "auto"}), (("--length",), {"type": int, "default": 0}),
         (("--sink",), {"action": "append", "default": []}), (("--note",), {"default": ""}),
-        (("--validate",), {"default": ""}))
+        (("--validate",), {"default": ""}),
+        (("--host",), {"default": "", "help": "instance qui héberge ce secret (aucun sink ici)"}))
+    add("rm", "retire un secret : déclaration et valeur", cmd_rm,
+        (("name",), {}), (("--yes",), {"action": "store_true"}))
     add("import", "adopte des valeurs déjà en place (fichier/config) vers le store", cmd_import,
         (("name",), {"nargs": "?"}), (("--all",), {"action": "store_true"}),
         (("--source",), {}), (("--force",), {"action": "store_true"}))
@@ -806,7 +882,7 @@ def main():
         # Setup commands run before there is a store or a secrets.conf to load.
         engine = None if getattr(args.func, "no_engine", False) else Engine()
         sys.exit(args.func(args, engine) or 0)
-    except (ConfigError, RotateAborted) as e:
+    except (ConfigError, RotateAborted, remote.RemoteError) as e:
         sys.exit(str(e))
     except BrokenPipeError:
         # `bv-secrets init --unit openrc | tee ...` or `| head`: the reader closed

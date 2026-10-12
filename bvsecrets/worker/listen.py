@@ -30,7 +30,8 @@ JOB_RE = re.compile(r"^/v1/jobs/([0-9a-zA-Z]+)$")
 # adoption, revelation de valeur) appartient au dashboard local de CETTE machine
 # et n'a aucune raison de traverser le reseau. Liste blanche : une action
 # inconnue est refusee, jamais transmise.
-REMOTE_ACTIONS = {"set_value", "apply", "rotate", "doctor"}
+# `inventory` ne lit que des noms et des etats : c'est la fiche de cet hote.
+REMOTE_ACTIONS = {"set_value", "apply", "rotate", "doctor", "inventory"}
 MAX_BODY = 64 * 1024
 # L'adresse d'ecoute est celle de wg0, et l'interface n'existe pas encore quand
 # le worker demarre au boot. On reessaie au lieu d'abandonner -- et surtout au

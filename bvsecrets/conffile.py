@@ -32,16 +32,19 @@ def write_text(text: str) -> None:
         os.close(fd)
 
 
-def render_section(name, kind, group, sinks, length=0, note="", validate=""):
+def render_section(name, kind, group, sinks, length=0, note="", validate="", host=""):
     if is_yaml():
-        return conf_yaml.render_section(name, kind, group, sinks, length, note, validate)
+        return conf_yaml.render_section(name, kind, group, sinks, length, note, validate, host=host)
     block = [f"[{name}]", f"kind  = {kind}"]
     if group != normalize_group("", kind):
         block.append(f"group = {group}")
     if length:
         block.append(f"length = {length}")
-    block.append("sinks =")
-    block += [f"    {s}" for s in sinks]
+    if host:
+        block.append(f"host  = {host}")
+    if sinks:
+        block.append("sinks =")
+        block += [f"    {s}" for s in sinks]
     if validate:
         block.append(f"validate = {validate}")
     if note:

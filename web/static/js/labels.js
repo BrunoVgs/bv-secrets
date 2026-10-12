@@ -53,7 +53,7 @@ export const VIEW_TITLES = {
   fichiers: ["Fichiers", "Où vivent les valeurs adoptées, et comment en adopter d'autres."],
   comptes: ["Comptes", ""],
   acces: ["Accès & rôles", ""],
-  hotes: ["Hôtes", "Les autres instances bv-secrets. Chacune garde ses propres déclarations : seule la valeur traverse."],
+  hotes: ["Instances", "Les autres machines qui font tourner bv-secrets. Leurs secrets s'éditent ici et partent chez elles par le tunnel ; chacune garde ses propres cibles."],
   audit: ["Audit", "Qui a atteint quoi, quand, d'où, et ce qui a changé."],
   docs: ["Docs", ""],
 };
@@ -71,6 +71,16 @@ export const MODE_HELP = {
 /* Etat d'un hote distant. Trois issues distinctes, parce qu'elles ne se reparent
    pas de la meme facon : machine ou service down, cles differentes des deux
    cotes, ou tout va bien. */
+/* Etat d'un secret tel que son instance le voit, chez elle. */
+export const REMOTE_SECRET = {
+  sync: { label: "synchronisé", color: "#3fbf5f" },
+  drift: { label: "dérive", color: "#e06060" },
+  extern: { label: "à importer", color: "#d9a13b" },
+  absent: { label: "non déployé", color: "#d9a13b" },
+  unknown: { label: "non vérifiable", color: "#888" },
+  remote: { label: "hébergé ailleurs", color: "#888" },
+};
+
 export const HOST_STATE = {
   ok: { label: "joignable", color: "#3fbf5f" },
   badkey: { label: "clé refusée", color: "#d9a13b" },

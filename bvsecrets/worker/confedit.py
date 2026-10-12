@@ -103,6 +103,20 @@ def rewrite_section(lines, name, kind, group, log):
     return out
 
 
+def remove_section(lines, name):
+    """Le fichier sans la declaration de `name`, et sans la ligne vide qui la
+    separait de la precedente."""
+    if is_yaml():
+        start, end, _ = _yaml_bounds(lines, name)
+    else:
+        start, end = _section_bounds(lines, name)
+    while end > start + 1 and not lines[end - 1].strip():
+        end -= 1
+    while start > 0 and not lines[start - 1].strip():
+        start -= 1
+    return lines[:start] + lines[end:]
+
+
 def read_conf_lines():
     return CONF.read_text(encoding="utf-8").splitlines(keepends=True)
 

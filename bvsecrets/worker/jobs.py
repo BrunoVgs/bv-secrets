@@ -6,10 +6,11 @@ verbatim in the dashboard console, so they must contain no secret value.
 import json
 import os
 import re
+import secrets as pysecrets
 import subprocess
 from pathlib import Path
 
-from .. import adopt, locations, validate
+from .. import adopt, hosts, locations, machine, remote, validate
 from ..conffile import append_sections, render_section
 from ..config import (ACCESS_RELOAD_SERVICES, ACCESS_RENDER, ALL_KINDS,
                       AUTH_CMD_CREATE, AUTH_CMD_DELETE, AUTH_CMD_LIST, AUTH_CMD_SETROLE,
@@ -326,6 +327,96 @@ def do_set_value(job, log):
     return {"name": name, "len": len(value), "changed": True}
 
 
+def do_inventory(job, log):
+    """Ce que cette instance declare, et la machine qui la porte. Aucune valeur :
+    des noms, des formats, des longueurs, un etat. C'est ce que lit l'instance
+    qui pilote quand elle ouvre la fiche de cet hote."""
+    engine = Engine()
+    meta = engine.meta()
+    secrets = []
+    for name in sorted(engine.cfg):
+        c = engine.cfg[name]
+        _, detail, state = engine.state_of(name)
+        secrets.append({"name": name, "kind": c["kind"], "group": c["group"],
+                        "len": len(engine.value_of(name)), "lastSet": meta.get(name, ""),
+                        "state": state, "detail": detail, "sinks": len(c["sinks"]),
+                        "probed": bool(c.get("probe")), "note": c["note"]})
+    log(f"{len(secrets)} secret(s) déclaré(s)")
+    return {"machine": machine.facts(), "secrets": secrets}
+
+
+def do_host_set(job, log):
+    """Ajoute ou modifie une instance du registre. Avec `newkey`, lui genere une
+    cle partagee ; elle reste dans le store et ne revient jamais dans le resultat."""
+    name = str(job.get("name", "")).strip()
+    hosts.save(name, str(job.get("url", "")), str(job.get("note", "")))
+    log(f"{name}: instance enregistrée ({hosts.url(name)})")
+    if job.get("newkey") or not hosts.key(name):
+        hosts.write_key(name, pysecrets.token_urlsafe(32))
+        log(f"{name}: clé partagée générée ({hosts.key_path(name)})")
+    return {"name": name}
+
+
+def do_host_deploy(job, log):
+    """Enregistre l'instance, puis l'envoie sur sa machine par ssh et verifie
+    qu'elle repond. C'est le compte du worker qui se connecte : il lui faut une
+    cle ssh acceptee la-bas."""
+    do_host_set(job, log)
+    name = str(job.get("name", "")).strip()
+    hosts.deploy(name, str(job.get("ssh", "")).strip(), log)
+    state = remote.probe(name)
+    log(f"{name}: {state['state']} — {state.get('detail', '')}")
+    if state["state"] != "ok":
+        raise RuntimeError(f"{name}: installée mais ne répond pas encore correctement")
+    return {"name": name, "state": state["state"]}
+
+
+def do_host_remove(job, log):
+    name = str(job.get("name", "")).strip()
+    hosts.remove(name)
+    log(f"{name}: instance retirée du registre, clé supprimée")
+    orphans = sorted(n for n, c in Engine().cfg.items() if c.get("host") == name)
+    if orphans:
+        log(f"⚠ {len(orphans)} secret(s) la nomment encore : {', '.join(orphans)}")
+    return {"name": name, "orphans": orphans}
+
+
+def do_host_link(job, log):
+    """Declare ICI des secrets que l'instance `host` porte deja, pour les piloter
+    d'ici : meme nom, meme format, `host:` et aucun sink. Aucune valeur n'est
+    rapatriee -- une instance ne revele pas ses valeurs par le reseau. Tant qu'on
+    n'en a pas pose une ici (`set`, ou une rotation), il n'y a rien a pousser."""
+    host = str(job.get("host", "")).strip()
+    wanted = {str(n) for n in (job.get("secrets") or [])}
+    if not wanted:
+        raise RuntimeError("aucun secret sélectionné")
+    engine = Engine()
+    there = {s["name"]: s for s in remote.inventory(host).get("secrets") or []}
+    blocks = []
+    for name in sorted(wanted):
+        if not NAME_RE.match(name):
+            raise RuntimeError(f"nom invalide: {name!r}")
+        if name in engine.cfg:
+            raise RuntimeError(f"{name} est déjà déclaré ici")
+        if name not in there:
+            raise RuntimeError(f"{name}: inconnu sur {host}")
+        kind = there[name]["kind"]
+        if kind == "computed":
+            raise RuntimeError(f"{name}: secret calculé, il se déduit là-bas")
+        # La politique de la-bas ne s'importe pas : ici, rien ne tourne tout seul
+        # tant qu'on ne l'a pas decide.
+        group = "manual" if there[name]["group"] == "manual" else "app"
+        blocks.append(render_section(name, kind, group, [], host=host,
+                                     note=there[name].get("note") or f"hébergé par {host}"))
+    append_sections(blocks)
+    Engine()
+    log(f"{len(blocks)} secret(s) de {host} déclaré(s) ici : {', '.join(sorted(wanted))}")
+    log("Aucune valeur rapatriée : poser la valeur ici (`set`) ou roter, puis pousser.")
+    return {"host": host, "linked": sorted(wanted)}
+
+
 HANDLERS = {"access": do_access, "meta": do_meta, "users": do_users, "user": do_user,
             "add": do_add, "adopt_plan": do_adopt_plan, "adopt": do_adopt,
-            "set_value": do_set_value}
+            "set_value": do_set_value, "inventory": do_inventory,
+            "host_set": do_host_set, "host_remove": do_host_remove,
+            "host_link": do_host_link, "host_deploy": do_host_deploy}

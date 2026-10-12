@@ -319,7 +319,7 @@ def load(path=None) -> dict:
 # --------------------------------------------------------------------------- #
 
 def render_section(name, kind, group, sinks, length=0, note="", validate="",
-                   template="", indent="  ") -> str:
+                   template="", indent="  ", host="") -> str:
     """Un bloc `NOM:` pret a inserer sous `secrets:`, indentation comprise."""
     f = indent * 2
     out = [f"{indent}{name}:"]
@@ -331,6 +331,8 @@ def render_section(name, kind, group, sinks, length=0, note="", validate="",
             out.append(f"{f}group: {group}")
     if length:
         out.append(f"{f}length: {length}")
+    if host:
+        out.append(f"{f}host: {host}")
     if sinks:
         out.append(f"{f}sinks:")
         out += [f"{f}{indent}- {s}" for s in sinks]
